@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/noise_gen.hh.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="cpp">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Constant { color: #cf6b4c; }
+.PreProc { color: #ba9875; }
+.StorageClass { color: #ffcc33; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#ifndef NOISE_GEN_H</span>
+<span class="PreProc">#define NOISE_GEN_H</span>
+
+<span class="PreProc">#include </span><span class="Constant">&quot;vecmath.hh&quot;</span>
+
+<span class="Structure">struct</span> noise_sample
+{
+    f32  Value;
+    vm::vec3 Deriv;
+};
+
+<span class="StorageClass">extern</span> svo*
+BuildNoiseSvo(u32 MaxDepth, u32 ScaleExp);
+
+<span class="StorageClass">extern</span> noise_sample
+Perlin3Noise(vm::vec3 P, f32 Freq, f32 Amp, f32 Falloff);
+
+<span class="PreProc">#endif</span>
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

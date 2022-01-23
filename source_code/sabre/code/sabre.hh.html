@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/sabre.hh.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="cpp">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Todo { color: #cf6b4c; }
+.Constant { color: #cf6b4c; }
+.Special { color: #ba9875; }
+.Statement { color: #ffcc33; }
+.PreProc { color: #ba9875; }
+.Operator { color: #ba9875; }
+.Comment { color: #707070; }
+.StorageClass { color: #ffcc33; }
+.Type { color: #ffcc33; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#ifndef SABRE_H</span>
+<span class="PreProc">#define SABRE_H</span>
+
+<span class="PreProc">#include </span><span class="Constant">&lt;cstdint&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;cstdio&gt;</span>
+
+<span class="PreProc">#define packed_data __attribute__((packed))</span>
+
+<span class="PreProc">#if defined(_WIN32)</span>
+  <span class="PreProc">#define EXPORT_SYMBOL __declspec(dllexport)</span>
+<span class="PreProc">#else</span>
+  <span class="PreProc">#define EXPORT_SYMBOL</span>
+<span class="PreProc">#endif</span>
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> t, std::<span class="Type">size_t</span> n&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> std::<span class="Type">size_t</span>
+ArrayCount(t (&amp;A)[n])
+{
+    <span class="Statement">return</span> <span class="Operator">sizeof</span>(A) / <span class="Operator">sizeof</span>(A[<span class="Constant">0</span>]);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+LogInfo(<span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> Fmt, ...)
+{
+    <span class="Type">va_list</span> Args;
+    va_start(Args, Fmt);
+
+    printf(<span class="Constant">&quot;</span><span class="Special">\033</span><span class="Constant">[1;34mINFO</span><span class="Special">\033</span><span class="Constant">[0;0m    &quot;</span>);
+    vprintf(Fmt, Args);
+    printf(<span class="Constant">&quot;</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+LogError(<span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> Fmt, ...)
+{
+    <span class="Type">va_list</span> Args;
+    va_start(Args, Fmt);
+
+    printf(<span class="Constant">&quot;</span><span class="Special">\033</span><span class="Constant">[1;31mFAIL</span><span class="Special">\033</span><span class="Constant">[0;0m    &quot;</span>);
+    vprintf(Fmt, Args);
+    printf(<span class="Constant">&quot;</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+LogPlatform(<span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> Fmt, ...)
+{
+    <span class="Type">va_list</span> Args;
+    va_start(Args, Fmt);
+
+    printf(<span class="Constant">&quot;</span><span class="Special">\033</span><span class="Constant">[1;35mPLAT</span><span class="Special">\033</span><span class="Constant">[0;0m    &quot;</span>);
+    vprintf(Fmt, Args);
+    printf(<span class="Constant">&quot;</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+}
+
+<span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Stub out for release builds</span>
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+TraceOK(<span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> Fmt, ...)
+{
+    <span class="Type">va_list</span> Args;
+    va_start(Args, Fmt);
+
+    printf(<span class="Constant">&quot;</span><span class="Special">\033</span><span class="Constant">[1;32mOKAY</span><span class="Special">\033</span><span class="Constant">[0;0m    &quot;</span>);
+    vprintf(Fmt, Args);
+    printf(<span class="Constant">&quot;</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+}
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> {
+   EXPORT_SYMBOL <span class="StorageClass">extern</span> <span class="Type">unsigned</span> <span class="Type">int</span> NvOptimusEnablement;
+}
+
+<span class="PreProc">#endif</span>
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

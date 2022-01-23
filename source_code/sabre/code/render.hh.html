@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/render.hh.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="cpp">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<meta name="colorscheme" content="phosphor_amber">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Todo { color: #cf6b4c; }
+.Comment { color: #707070; }
+.PreProc { color: #ba9875; }
+.StorageClass { color: #ffcc33; }
+.Type { color: #ffcc33; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#ifndef SABRE_RENDER_H</span>
+<span class="PreProc">#define SABRE_RENDER_H</span>
+
+
+<span class="Structure">struct</span> render_data;
+
+<span class="Structure">typedef</span> <span class="Structure">enum</span> shader_id
+{
+    SHADER_MAIN_VS,
+    SHADER_MAIN_FS,
+    SHADER_RENDER_CS,
+    SHADER_HASHER_CS,
+
+    SHADER_ID_COUNT
+} shader_id;
+
+<span class="Structure">typedef</span> <span class="Structure">struct</span> view_data
+{
+    <span class="Type">int</span> ScreenWidth;
+    <span class="Type">int</span> ScreenHeight;
+
+    <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Tighten type safety here.</span>
+    <span class="Type">float</span>* CamTransform;
+    <span class="Type">float</span>* CamPos;
+} view_data;
+
+<span class="Structure">typedef</span> <span class="Structure">struct</span> shader_data
+{
+    <span class="StorageClass">const</span> <span class="Type">char</span>** Code;
+} shader_data;
+
+<span class="StorageClass">extern</span> render_data*
+CreateRenderData(<span class="StorageClass">const</span> svo* Scene,
+                 <span class="StorageClass">const</span> view_data* ViewData,
+                 <span class="StorageClass">const</span> shader_data* Shaders);
+
+<span class="StorageClass">extern</span> <span class="Type">void</span>
+UpdateRenderScene(<span class="StorageClass">const</span> svo* Scene, render_data* RenderDataOut);
+
+<span class="StorageClass">extern</span> <span class="Type">bool</span>
+UpdateRenderShaders(<span class="StorageClass">const</span> svo* Scene,
+                    <span class="StorageClass">const</span> shader_data* Shaders,
+                    u32 ChangeMsk,
+                    render_data* Out);
+
+<span class="StorageClass">extern</span> u64
+DrawScene(<span class="StorageClass">const</span> render_data* R, <span class="StorageClass">const</span> view_data* ViewData);
+
+<span class="StorageClass">extern</span> <span class="Type">void</span>
+DeleteRenderData(render_data* R);
+
+<span class="StorageClass">extern</span> <span class="Type">bool</span>
+DEBUGOutputRenderShaderAssembly(<span class="StorageClass">const</span> render_data* R, <span class="Type">FILE</span>* OutFile);
+
+<span class="PreProc">#endif</span>
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

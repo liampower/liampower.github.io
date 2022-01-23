@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/noise_gen.cc.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="cpp">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Constant { color: #cf6b4c; }
+.Conditional { color: #ffcc33; }
+.Statement { color: #ffcc33; }
+.PreProc { color: #ba9875; }
+.Type { color: #ffcc33; }
+.StorageClass { color: #ffcc33; }
+.Comment { color: #707070; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#include </span><span class="Constant">&quot;sabre.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;vecmath.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;svo.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;noise_gen.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;cstdio&gt;</span>
+
+<span class="Statement">using</span> <span class="Structure">namespace</span> vm;
+
+<span class="Comment">// Noise values &gt;= this constant are considered to be &quot;solid&quot;</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> f32 NOISE_THRESHOLD = <span class="Constant">0.6f</span>;
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> f32 SCALE_FACTOR = <span class="Constant">1.0f</span>/<span class="Constant">257.0f</span>;
+
+<span class="Comment">// Randomly distributed permutation of numbers 0-255</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u8 Pt[<span class="Constant">512</span>] = {
+    <span class="Constant">151</span>,<span class="Constant">160</span>,<span class="Constant">137</span>,<span class="Constant">91</span>,<span class="Constant">90</span>,<span class="Constant">15</span>,<span class="Constant">131</span>,<span class="Constant">13</span>,<span class="Constant">201</span>,<span class="Constant">95</span>,<span class="Constant">96</span>,<span class="Constant">53</span>,<span class="Constant">194</span>,<span class="Constant">233</span>,<span class="Constant">7</span>,
+    <span class="Constant">225</span>,<span class="Constant">140</span>,<span class="Constant">36</span>,<span class="Constant">103</span>,<span class="Constant">30</span>,<span class="Constant">69</span>,<span class="Constant">142</span>,<span class="Constant">8</span>,<span class="Constant">99</span>,<span class="Constant">37</span>,<span class="Constant">240</span>,<span class="Constant">21</span>,<span class="Constant">10</span>,<span class="Constant">23</span>,<span class="Constant">190</span>,
+    <span class="Constant">6</span>,<span class="Constant">148</span>,<span class="Constant">247</span>,<span class="Constant">120</span>,<span class="Constant">234</span>,<span class="Constant">75</span>,<span class="Constant">0</span>,<span class="Constant">26</span>,<span class="Constant">197</span>,<span class="Constant">62</span>,<span class="Constant">94</span>,<span class="Constant">252</span>,<span class="Constant">219</span>,<span class="Constant">203</span>,<span class="Constant">117</span>,
+    <span class="Constant">35</span>,<span class="Constant">11</span>,<span class="Constant">32</span>,<span class="Constant">57</span>,<span class="Constant">177</span>,<span class="Constant">33</span>, <span class="Constant">88</span>,<span class="Constant">237</span>,<span class="Constant">149</span>,<span class="Constant">56</span>,<span class="Constant">87</span>,<span class="Constant">174</span>,<span class="Constant">20</span>,<span class="Constant">125</span>,<span class="Constant">136</span>,
+    <span class="Constant">171</span>,<span class="Constant">168</span>, <span class="Constant">68</span>,<span class="Constant">175</span>,<span class="Constant">74</span>,<span class="Constant">165</span>,<span class="Constant">71</span>,<span class="Constant">134</span>,<span class="Constant">139</span>,<span class="Constant">48</span>,<span class="Constant">27</span>,<span class="Constant">166</span>, <span class="Constant">77</span>,<span class="Constant">146</span>,
+    <span class="Constant">158</span>,<span class="Constant">231</span>,<span class="Constant">83</span>,<span class="Constant">111</span>,<span class="Constant">229</span>,<span class="Constant">122</span>,<span class="Constant">60</span>,<span class="Constant">211</span>,<span class="Constant">133</span>,<span class="Constant">230</span>,<span class="Constant">220</span>,<span class="Constant">105</span>,<span class="Constant">92</span>,<span class="Constant">41</span>,
+    <span class="Constant">55</span>,<span class="Constant">46</span>,<span class="Constant">245</span>,<span class="Constant">40</span>,<span class="Constant">244</span>, <span class="Constant">102</span>,<span class="Constant">143</span>,<span class="Constant">54</span>, <span class="Constant">65</span>,<span class="Constant">25</span>,<span class="Constant">63</span>,<span class="Constant">161</span>, <span class="Constant">1</span>,<span class="Constant">216</span>,<span class="Constant">80</span>,
+    <span class="Constant">73</span>,<span class="Constant">209</span>,<span class="Constant">76</span>,<span class="Constant">132</span>,<span class="Constant">187</span>,<span class="Constant">208</span>, <span class="Constant">89</span>,<span class="Constant">18</span>,<span class="Constant">169</span>,<span class="Constant">200</span>,<span class="Constant">196</span>,<span class="Constant">135</span>,<span class="Constant">130</span>,<span class="Constant">116</span>,
+    <span class="Constant">188</span>,<span class="Constant">159</span>,<span class="Constant">86</span>,<span class="Constant">164</span>,<span class="Constant">100</span>,<span class="Constant">109</span>,<span class="Constant">198</span>,<span class="Constant">173</span>,<span class="Constant">186</span>, <span class="Constant">3</span>,<span class="Constant">64</span>,<span class="Constant">52</span>,<span class="Constant">217</span>,<span class="Constant">226</span>,
+    <span class="Constant">250</span>,<span class="Constant">124</span>,<span class="Constant">123</span>,<span class="Constant">5</span>,<span class="Constant">202</span>,<span class="Constant">38</span>,<span class="Constant">147</span>,<span class="Constant">118</span>,<span class="Constant">126</span>,<span class="Constant">255</span>,<span class="Constant">82</span>,<span class="Constant">85</span>,<span class="Constant">212</span>,<span class="Constant">207</span>,
+    <span class="Constant">206</span>,<span class="Constant">59</span>,<span class="Constant">227</span>,<span class="Constant">47</span>,<span class="Constant">16</span>,<span class="Constant">58</span>,<span class="Constant">17</span>,<span class="Constant">182</span>,<span class="Constant">189</span>,<span class="Constant">28</span>,<span class="Constant">42</span>,<span class="Constant">223</span>,<span class="Constant">183</span>,<span class="Constant">170</span>,
+    <span class="Constant">213</span>,<span class="Constant">119</span>,<span class="Constant">248</span>,<span class="Constant">152</span>, <span class="Constant">2</span>,<span class="Constant">44</span>,<span class="Constant">154</span>,<span class="Constant">163</span>, <span class="Constant">70</span>,<span class="Constant">221</span>,<span class="Constant">153</span>,<span class="Constant">101</span>,<span class="Constant">155</span>,
+    <span class="Constant">167</span>, <span class="Constant">43</span>,<span class="Constant">172</span>,<span class="Constant">9</span>,<span class="Constant">129</span>,<span class="Constant">22</span>,<span class="Constant">39</span>,<span class="Constant">253</span>, <span class="Constant">19</span>,<span class="Constant">98</span>,<span class="Constant">108</span>,<span class="Constant">110</span>,<span class="Constant">79</span>,<span class="Constant">113</span>,<span class="Constant">224</span>,
+    <span class="Constant">232</span>,<span class="Constant">178</span>,<span class="Constant">185</span>, <span class="Constant">112</span>,<span class="Constant">104</span>,<span class="Constant">218</span>,<span class="Constant">246</span>,<span class="Constant">97</span>,<span class="Constant">228</span>, <span class="Constant">251</span>,<span class="Constant">34</span>,<span class="Constant">242</span>,<span class="Constant">193</span>,
+    <span class="Constant">238</span>,<span class="Constant">210</span>,<span class="Constant">144</span>,<span class="Constant">12</span>,<span class="Constant">191</span>,<span class="Constant">179</span>,<span class="Constant">162</span>,<span class="Constant">241</span>, <span class="Constant">81</span>,<span class="Constant">51</span>,<span class="Constant">145</span>,<span class="Constant">235</span>,<span class="Constant">249</span>,<span class="Constant">14</span>,
+    <span class="Constant">239</span>,<span class="Constant">107</span>,<span class="Constant">49</span>,<span class="Constant">192</span>,<span class="Constant">214</span>, <span class="Constant">31</span>,<span class="Constant">181</span>,<span class="Constant">199</span>,<span class="Constant">106</span>,<span class="Constant">157</span>,<span class="Constant">184</span>, <span class="Constant">84</span>,<span class="Constant">204</span>,
+    <span class="Constant">176</span>,<span class="Constant">115</span>,<span class="Constant">121</span>,<span class="Constant">50</span>,<span class="Constant">45</span>,<span class="Constant">127</span>, <span class="Constant">4</span>,<span class="Constant">150</span>,<span class="Constant">254</span>,<span class="Constant">138</span>,<span class="Constant">236</span>,<span class="Constant">205</span>,<span class="Constant">93</span>,<span class="Constant">222</span>,
+    <span class="Constant">114</span>,<span class="Constant">67</span>,<span class="Constant">29</span>,<span class="Constant">24</span>,<span class="Constant">72</span>,<span class="Constant">243</span>,<span class="Constant">141</span>,<span class="Constant">128</span>,<span class="Constant">195</span>,<span class="Constant">78</span>,<span class="Constant">66</span>,<span class="Constant">215</span>,<span class="Constant">61</span>,<span class="Constant">156</span>,<span class="Constant">180</span>,
+    <span class="Constant">151</span>,<span class="Constant">160</span>,<span class="Constant">137</span>,<span class="Constant">91</span>,<span class="Constant">90</span>,<span class="Constant">15</span>,<span class="Constant">131</span>,<span class="Constant">13</span>,<span class="Constant">201</span>,<span class="Constant">95</span>,<span class="Constant">96</span>,<span class="Constant">53</span>,<span class="Constant">194</span>,<span class="Constant">233</span>,<span class="Constant">7</span>,
+    <span class="Constant">225</span>,<span class="Constant">140</span>,<span class="Constant">36</span>,<span class="Constant">103</span>,<span class="Constant">30</span>,<span class="Constant">69</span>,<span class="Constant">142</span>,<span class="Constant">8</span>,<span class="Constant">99</span>,<span class="Constant">37</span>,<span class="Constant">240</span>,<span class="Constant">21</span>,<span class="Constant">10</span>,<span class="Constant">23</span>,<span class="Constant">190</span>,
+    <span class="Constant">6</span>,<span class="Constant">148</span>,<span class="Constant">247</span>,<span class="Constant">120</span>,<span class="Constant">234</span>,<span class="Constant">75</span>,<span class="Constant">0</span>,<span class="Constant">26</span>,<span class="Constant">197</span>,<span class="Constant">62</span>,<span class="Constant">94</span>,<span class="Constant">252</span>,<span class="Constant">219</span>,<span class="Constant">203</span>,<span class="Constant">117</span>,
+    <span class="Constant">35</span>,<span class="Constant">11</span>,<span class="Constant">32</span>,<span class="Constant">57</span>,<span class="Constant">177</span>,<span class="Constant">33</span>, <span class="Constant">88</span>,<span class="Constant">237</span>,<span class="Constant">149</span>,<span class="Constant">56</span>,<span class="Constant">87</span>,<span class="Constant">174</span>,<span class="Constant">20</span>,<span class="Constant">125</span>,<span class="Constant">136</span>,
+    <span class="Constant">171</span>,<span class="Constant">168</span>, <span class="Constant">68</span>,<span class="Constant">175</span>,<span class="Constant">74</span>,<span class="Constant">165</span>,<span class="Constant">71</span>,<span class="Constant">134</span>,<span class="Constant">139</span>,<span class="Constant">48</span>,<span class="Constant">27</span>,<span class="Constant">166</span>, <span class="Constant">77</span>,<span class="Constant">146</span>,
+    <span class="Constant">158</span>,<span class="Constant">231</span>,<span class="Constant">83</span>,<span class="Constant">111</span>,<span class="Constant">229</span>,<span class="Constant">122</span>,<span class="Constant">60</span>,<span class="Constant">211</span>,<span class="Constant">133</span>,<span class="Constant">230</span>,<span class="Constant">220</span>,<span class="Constant">105</span>,<span class="Constant">92</span>,<span class="Constant">41</span>,
+    <span class="Constant">55</span>,<span class="Constant">46</span>,<span class="Constant">245</span>,<span class="Constant">40</span>,<span class="Constant">244</span>, <span class="Constant">102</span>,<span class="Constant">143</span>,<span class="Constant">54</span>, <span class="Constant">65</span>,<span class="Constant">25</span>,<span class="Constant">63</span>,<span class="Constant">161</span>, <span class="Constant">1</span>,<span class="Constant">216</span>,<span class="Constant">80</span>,
+    <span class="Constant">73</span>,<span class="Constant">209</span>,<span class="Constant">76</span>,<span class="Constant">132</span>,<span class="Constant">187</span>,<span class="Constant">208</span>, <span class="Constant">89</span>,<span class="Constant">18</span>,<span class="Constant">169</span>,<span class="Constant">200</span>,<span class="Constant">196</span>,<span class="Constant">135</span>,<span class="Constant">130</span>,<span class="Constant">116</span>,
+    <span class="Constant">188</span>,<span class="Constant">159</span>,<span class="Constant">86</span>,<span class="Constant">164</span>,<span class="Constant">100</span>,<span class="Constant">109</span>,<span class="Constant">198</span>,<span class="Constant">173</span>,<span class="Constant">186</span>, <span class="Constant">3</span>,<span class="Constant">64</span>,<span class="Constant">52</span>,<span class="Constant">217</span>,<span class="Constant">226</span>,
+    <span class="Constant">250</span>,<span class="Constant">124</span>,<span class="Constant">123</span>,<span class="Constant">5</span>,<span class="Constant">202</span>,<span class="Constant">38</span>,<span class="Constant">147</span>,<span class="Constant">118</span>,<span class="Constant">126</span>,<span class="Constant">255</span>,<span class="Constant">82</span>,<span class="Constant">85</span>,<span class="Constant">212</span>,<span class="Constant">207</span>,
+    <span class="Constant">206</span>,<span class="Constant">59</span>,<span class="Constant">227</span>,<span class="Constant">47</span>,<span class="Constant">16</span>,<span class="Constant">58</span>,<span class="Constant">17</span>,<span class="Constant">182</span>,<span class="Constant">189</span>,<span class="Constant">28</span>,<span class="Constant">42</span>,<span class="Constant">223</span>,<span class="Constant">183</span>,<span class="Constant">170</span>,
+    <span class="Constant">213</span>,<span class="Constant">119</span>,<span class="Constant">248</span>,<span class="Constant">152</span>, <span class="Constant">2</span>,<span class="Constant">44</span>,<span class="Constant">154</span>,<span class="Constant">163</span>, <span class="Constant">70</span>,<span class="Constant">221</span>,<span class="Constant">153</span>,<span class="Constant">101</span>,<span class="Constant">155</span>,
+    <span class="Constant">167</span>, <span class="Constant">43</span>,<span class="Constant">172</span>,<span class="Constant">9</span>,<span class="Constant">129</span>,<span class="Constant">22</span>,<span class="Constant">39</span>,<span class="Constant">253</span>, <span class="Constant">19</span>,<span class="Constant">98</span>,<span class="Constant">108</span>,<span class="Constant">110</span>,<span class="Constant">79</span>,<span class="Constant">113</span>,<span class="Constant">224</span>,
+    <span class="Constant">232</span>,<span class="Constant">178</span>,<span class="Constant">185</span>, <span class="Constant">112</span>,<span class="Constant">104</span>,<span class="Constant">218</span>,<span class="Constant">246</span>,<span class="Constant">97</span>,<span class="Constant">228</span>, <span class="Constant">251</span>,<span class="Constant">34</span>,<span class="Constant">242</span>,<span class="Constant">193</span>,
+    <span class="Constant">238</span>,<span class="Constant">210</span>,<span class="Constant">144</span>,<span class="Constant">12</span>,<span class="Constant">191</span>,<span class="Constant">179</span>,<span class="Constant">162</span>,<span class="Constant">241</span>, <span class="Constant">81</span>,<span class="Constant">51</span>,<span class="Constant">145</span>,<span class="Constant">235</span>,<span class="Constant">249</span>,<span class="Constant">14</span>,
+    <span class="Constant">239</span>,<span class="Constant">107</span>,<span class="Constant">49</span>,<span class="Constant">192</span>,<span class="Constant">214</span>, <span class="Constant">31</span>,<span class="Constant">181</span>,<span class="Constant">199</span>,<span class="Constant">106</span>,<span class="Constant">157</span>,<span class="Constant">184</span>, <span class="Constant">84</span>,<span class="Constant">204</span>,
+    <span class="Constant">176</span>,<span class="Constant">115</span>,<span class="Constant">121</span>,<span class="Constant">50</span>,<span class="Constant">45</span>,<span class="Constant">127</span>, <span class="Constant">4</span>,<span class="Constant">150</span>,<span class="Constant">254</span>,<span class="Constant">138</span>,<span class="Constant">236</span>,<span class="Constant">205</span>,<span class="Constant">93</span>,<span class="Constant">222</span>,
+    <span class="Constant">114</span>,<span class="Constant">67</span>,<span class="Constant">29</span>,<span class="Constant">24</span>,<span class="Constant">72</span>,<span class="Constant">243</span>,<span class="Constant">141</span>,<span class="Constant">128</span>,<span class="Constant">195</span>,<span class="Constant">78</span>,<span class="Constant">66</span>,<span class="Constant">215</span>,<span class="Constant">61</span>,<span class="Constant">156</span>,<span class="Constant">180</span>
+};
+
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> <span class="Type">inline</span> f32
+Smootherstep(f32 X)
+{
+    <span class="Statement">return</span> X*X*X * (X*(X*<span class="Constant">6.0f</span> - <span class="Constant">15.0f</span>) + <span class="Constant">10.0f</span>);
+}
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> <span class="Type">inline</span> f32
+Smootherstep1(f32 X)
+{
+    <span class="Comment">// First order derivative of the smootherstep function</span>
+    <span class="Comment">// S'(x) = 30x^4 - 60x^3 - 30x^2</span>
+    <span class="Statement">return</span> X*X * (<span class="Constant">30</span>*(X*X - <span class="Constant">2</span>*X + <span class="Constant">1</span>));
+}
+
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> <span class="Type">inline</span> f32
+Smoothstep(f32 X)
+{
+  <span class="Statement">return</span> X * X * (<span class="Constant">3</span> - <span class="Constant">2</span> * X);
+}
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> <span class="Type">inline</span> f32
+Smoothstep1(f32 X)
+{
+    <span class="Statement">return</span> <span class="Constant">6</span>*X*(<span class="Constant">1</span> - X);
+}
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> <span class="Type">inline</span> f32
+Lerp(f32 Edge0, f32 Edge1, f32 X)
+{
+    <span class="Statement">return</span> Edge0 + ((Edge1 - Edge0)*X);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> f32
+GradDotDst(<span class="Type">int</span> Hash, f32 X, f32 Y, f32 Z)
+{
+    <span class="Conditional">switch</span> (Hash &amp; <span class="Constant">0xF</span>)
+    {
+        <span class="Statement">case</span> <span class="Constant">0x0</span>: <span class="Statement">return</span>  X + Y;
+        <span class="Statement">case</span> <span class="Constant">0x1</span>: <span class="Statement">return</span> -X + Y;
+        <span class="Statement">case</span> <span class="Constant">0x2</span>: <span class="Statement">return</span>  X - Y;
+        <span class="Statement">case</span> <span class="Constant">0x3</span>: <span class="Statement">return</span> -X - Y;
+        <span class="Statement">case</span> <span class="Constant">0x4</span>: <span class="Statement">return</span>  X + Z;
+        <span class="Statement">case</span> <span class="Constant">0x5</span>: <span class="Statement">return</span>  X - Z;
+        <span class="Statement">case</span> <span class="Constant">0x6</span>: <span class="Statement">return</span> -X + Z;
+        <span class="Statement">case</span> <span class="Constant">0x7</span>: <span class="Statement">return</span> -X - Z;
+        <span class="Statement">case</span> <span class="Constant">0x8</span>: <span class="Statement">return</span>  Y + Z;
+        <span class="Statement">case</span> <span class="Constant">0x9</span>: <span class="Statement">return</span> -Y + Z;
+        <span class="Statement">case</span> <span class="Constant">0xA</span>: <span class="Statement">return</span>  Y - Z;
+        <span class="Statement">case</span> <span class="Constant">0xB</span>: <span class="Statement">return</span> -Y - Z;
+        <span class="Statement">case</span> <span class="Constant">0xC</span>: <span class="Statement">return</span>  Y + X;
+        <span class="Statement">case</span> <span class="Constant">0xD</span>: <span class="Statement">return</span> -Y + X;
+        <span class="Statement">case</span> <span class="Constant">0xE</span>: <span class="Statement">return</span>  Y - X;
+        <span class="Statement">case</span> <span class="Constant">0xF</span>: <span class="Statement">return</span> -Y - Z;
+        <span class="Statement">default</span>: <span class="Statement">return</span> <span class="Constant">0</span>; <span class="Comment">// Shouldn't happen</span>
+    }
+}
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> <span class="Type">inline</span> f32
+Fastfloor(f32 X)
+{
+    <span class="Statement">return</span> f32(<span class="Type">int</span>(X));
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+Perlin3Deriv(vec3 P)
+{
+    f32 X = P.X * SCALE_FACTOR;
+    f32 Y = P.Y * SCALE_FACTOR;
+    f32 Z = P.Z * SCALE_FACTOR;
+
+    <span class="Comment">// Unit cube Left-Bottom-Back coordinates</span>
+    <span class="Type">int</span> Xi = (<span class="Type">int</span>(X) &amp; <span class="Constant">255</span>);
+    <span class="Type">int</span> Yi = (<span class="Type">int</span>(Y) &amp; <span class="Constant">255</span>);
+    <span class="Type">int</span> Zi = (<span class="Type">int</span>(Z) &amp; <span class="Constant">255</span>);
+
+    <span class="Comment">// Coords of our point inside its unit cube.</span>
+    f32 Xf = X - Fastfloor(X);
+    f32 Yf = Y - Fastfloor(Y);
+    f32 Zf = Z - Fastfloor(Z);
+
+    <span class="Comment">// Smooth point coords towards integral values.</span>
+    <span class="Comment">// This produces smoother noise output.</span>
+    f32 U = Smoothstep(Xf);
+    f32 V = Smoothstep(Yf);
+    f32 W = Smoothstep(Zf);
+
+    <span class="Comment">// Derivative smootherstep values</span>
+    f32 Du = Smoothstep1(Xf);
+    f32 Dv = Smoothstep1(Yf);
+    f32 Dw = Smoothstep1(Zf);
+
+    <span class="Comment">// Hash values for the corners of the unit cube.</span>
+    <span class="Comment">// Named according to their positions - assume we start</span>
+    <span class="Comment">// at (0, 0, 0) and the cube sides are unit length.</span>
+    <span class="Type">int</span> C000, C010, C001, C011, C100, C110, C101, C111;
+
+    <span class="Comment">// Hash values are calculted using the permutation</span>
+    <span class="Comment">// table.</span>
+    C000 = Pt[Pt[Pt[Xi] + Yi] + Zi];
+    C010 = Pt[Pt[Pt[Xi] + Yi + <span class="Constant">1</span>] + Zi];
+    C001 = Pt[Pt[Pt[Xi] + Yi] + Zi + <span class="Constant">1</span>];
+    C011 = Pt[Pt[Pt[Xi] + Yi + <span class="Constant">1</span>] + Zi + <span class="Constant">1</span>];
+    C100 = Pt[Pt[Pt[Xi + <span class="Constant">1</span>] + Yi] + Zi];
+    C110 = Pt[Pt[Pt[Xi + <span class="Constant">1</span>] + Yi + <span class="Constant">1</span>] + Zi];
+    C101 = Pt[Pt[Pt[Xi + <span class="Constant">1</span>] + Yi] + Zi + <span class="Constant">1</span>];
+    C111 = Pt[Pt[Pt[Xi + <span class="Constant">1</span>] + Yi + <span class="Constant">1</span>] + Zi + <span class="Constant">1</span>];
+
+    f32 A = GradDotDst(C000, Xf, Yf, Zf);
+    f32 B = GradDotDst(C100, Xf - <span class="Constant">1.0f</span>, Yf, Zf);
+    f32 C = GradDotDst(C010, Xf, Yf - <span class="Constant">1.0f</span>, Zf);
+    f32 D = GradDotDst(C110, Xf - <span class="Constant">1.0f</span>, Yf - <span class="Constant">1.0f</span>, Zf);
+    f32 E = GradDotDst(C001, Xf, Yf, Zf - <span class="Constant">1.0f</span>);
+    f32 F = GradDotDst(C101, Xf - <span class="Constant">1.0f</span>, Yf, Zf - <span class="Constant">1.0f</span>);
+    f32 G = GradDotDst(C011, Xf, Yf - <span class="Constant">1.0f</span>, Zf - <span class="Constant">1.0f</span>);
+    f32 H = GradDotDst(C111, Xf - <span class="Constant">1.0f</span>, Yf - <span class="Constant">1.0f</span>, Zf - <span class="Constant">1.0f</span>);
+
+    f32 K0 = (B - A);
+    f32 K1 = (C - A);
+    f32 K2 = (E - A);
+    f32 K3 = (A + D - B - C);
+    f32 K4 = (A + F - B - E);
+    f32 K5 = (A + G - C - E);
+    f32 K6 = (B + C + E + H - A - D - F - G);
+
+    <span class="Comment">// Noise partial derivatives in X, Y, Z directions</span>
+    f32 Dx = Du * (K0 + V*K3 + W*K4 + V*W*K6);
+    f32 Dy = Dv * (K1 + U*K3 + W*K5 + U*W*K6);
+    f32 Dz = Dw * (K2 + U*K4 + V*K5 + U*V*K6);
+
+    <span class="Statement">return</span> vec3(Dx, Dy, Dz);
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">bool</span>
+Perlin3(vec3 P, vec3 Min, vec3 Max)
+{
+    f32 X = P.X * SCALE_FACTOR;
+    f32 Y = P.Y * SCALE_FACTOR;
+    f32 Z = P.Z * SCALE_FACTOR;
+
+    <span class="Comment">// Unit cube Left-Bottom-Back coordinates</span>
+    <span class="Type">int</span> Xi = (<span class="Type">int</span>(X) &amp; <span class="Constant">255</span>);
+    <span class="Type">int</span> Yi = (<span class="Type">int</span>(Y) &amp; <span class="Constant">255</span>);
+    <span class="Type">int</span> Zi = (<span class="Type">int</span>(Z) &amp; <span class="Constant">255</span>);
+
+    <span class="Comment">// Coords of our point inside its unit cube.</span>
+    f32 Xf = X - Fastfloor(X);
+    f32 Yf = Y - Fastfloor(Y);
+    f32 Zf = Z - Fastfloor(Z);
+
+    <span class="Comment">// Smooth point coords towards integral values.</span>
+    <span class="Comment">// This produces smoother noise output.</span>
+    f32 U = Smoothstep(Xf);
+    f32 V = Smoothstep(Yf);
+    f32 W = Smoothstep(Zf);
+
+    <span class="Comment">// Hash values for the corners of the unit cube.</span>
+    <span class="Comment">// Named according to their positions - assume we start</span>
+    <span class="Comment">// at (0, 0, 0) and the cube sides are unit length.</span>
+    <span class="Type">int</span> C000, C010, C001, C011, C100, C110, C101, C111;
+
+    <span class="Comment">// Hash values are calculted using the permutation</span>
+    <span class="Comment">// table.</span>
+    C000 = Pt[Pt[Pt[Xi] + Yi] + Zi];
+    C010 = Pt[Pt[Pt[Xi] + Yi + <span class="Constant">1</span>] + Zi];
+    C001 = Pt[Pt[Pt[Xi] + Yi] + Zi + <span class="Constant">1</span>];
+    C011 = Pt[Pt[Pt[Xi] + Yi + <span class="Constant">1</span>] + Zi + <span class="Constant">1</span>];
+    C100 = Pt[Pt[Pt[Xi + <span class="Constant">1</span>] + Yi] + Zi];
+    C110 = Pt[Pt[Pt[Xi + <span class="Constant">1</span>] + Yi + <span class="Constant">1</span>] + Zi];
+    C101 = Pt[Pt[Pt[Xi + <span class="Constant">1</span>] + Yi] + Zi + <span class="Constant">1</span>];
+    C111 = Pt[Pt[Pt[Xi + <span class="Constant">1</span>] + Yi + <span class="Constant">1</span>] + Zi + <span class="Constant">1</span>];
+
+    f32 A = GradDotDst(C000, Xf, Yf, Zf);
+    f32 B = GradDotDst(C100, Xf - <span class="Constant">1.0f</span>, Yf, Zf);
+    f32 C = GradDotDst(C010, Xf, Yf - <span class="Constant">1.0f</span>, Zf);
+    f32 D = GradDotDst(C110, Xf - <span class="Constant">1.0f</span>, Yf - <span class="Constant">1.0f</span>, Zf);
+    f32 E = GradDotDst(C001, Xf, Yf, Zf - <span class="Constant">1.0f</span>);
+    f32 F = GradDotDst(C101, Xf - <span class="Constant">1.0f</span>, Yf, Zf - <span class="Constant">1.0f</span>);
+    f32 G = GradDotDst(C011, Xf, Yf - <span class="Constant">1.0f</span>, Zf - <span class="Constant">1.0f</span>);
+    f32 H = GradDotDst(C111, Xf - <span class="Constant">1.0f</span>, Yf - <span class="Constant">1.0f</span>, Zf - <span class="Constant">1.0f</span>);
+
+    f32 K0 = (B - A);
+    f32 K1 = (C - A);
+    f32 K2 = (E - A);
+    f32 K3 = D - C - K0;
+    f32 K4 = F - E - K0;
+    f32 K5 = G - E - K1;
+    f32 K6 = (H - G) - (F - E) - K3;<span class="Comment">//(B + C + E + H - A - D - F - G);</span>
+
+    f32 N = A + U * K0 + V * K1 + W * K2 + U * V * K3 + U * W * K4 + V * W * K5 + U * V * W * K6;
+    N = ((N + <span class="Constant">1.0f</span>) / <span class="Constant">2.0f</span>);
+
+    vec3 Diff = Abs(Max - Min);
+    vec3 MaxDN = vec3(<span class="Constant">0.009884f</span>)*<span class="Constant">1.5f</span>*Diff;
+    vec3 MaxVal = (vec3(N) + MaxDN);
+
+    <span class="Statement">return</span> Any(LessThan(vec3(NOISE_THRESHOLD), MaxVal));
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">bool</span>
+ShapeSamplerFn(vec3 Min, vec3 Max, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Tree, <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span>)
+{
+    vec3 H = (Max - Min) * <span class="Constant">0.5f</span>;
+    vec3 C = ((Min + H) * f32(<span class="Constant">1U</span> &lt;&lt; Tree-&gt;Bias.Scale));
+    <span class="Comment">//return Perlin3(C, Min, Max);</span>
+
+    <span class="Statement">return</span> Perlin3(C, Min, Max);
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+DummySampler(vec3 C, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span>, <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span>)
+{
+    <span class="Statement">return</span> vec3{<span class="Constant">0.72f</span>, <span class="Constant">0.25f</span>, <span class="Constant">0.05f</span>};
+}
+
+
+<span class="StorageClass">extern</span> svo*
+BuildNoiseSvo(u32 MaxDepth, u32 ScaleExp)
+{
+    shape_sampler S{ <span class="Constant">nullptr</span>, &amp;ShapeSamplerFn };
+    data_sampler D{ <span class="Constant">nullptr</span>, &amp;DummySampler };
+
+    svo* Svo = CreateScene(<span class="Constant">10</span>, MaxDepth, &amp;S, &amp;D, &amp;D);
+
+
+    <span class="Statement">return</span> Svo;
+}
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

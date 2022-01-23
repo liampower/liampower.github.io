@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/build_windows.ninja.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="ninja">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Comment { color: #707070; }
+.Identifier { color: #99ad6a; }
+.Statement { color: #ffcc33; }
+.Operator { color: #ba9875; }
+.Keyword { color: #ffcc33; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+Compiler <span class="Operator">=</span> clang++
+DisabledWarnings <span class="Operator">=</span> -Wno-unused-parameter -Wno-c++98-compat                    <span class="Operator">$</span>
+                   -Wno-c++98-compat-pedantic                                 <span class="Operator">$</span>
+                   -Wno-gnu-anonymous-struct                                  <span class="Operator">$</span>
+                   -Wno-old-style-cast                                        <span class="Operator">$</span>
+                   -Wno-unused-function
+
+NonErrorWarnings <span class="Operator">=</span> -Wno-error=unused-variable                                 <span class="Operator">$</span>
+                   -Wno-error=missing-prototypes                              <span class="Operator">$</span>
+                   -Wno-error=deprecated-declarations                         <span class="Operator">$</span>
+
+<span class="Comment">#Optimisation = -O3 -fwrapv</span>
+Optimisation <span class="Operator">=</span> -fsanitize=address,undefined,integer -g -gcodeview
+
+Features <span class="Operator">=</span> -fno-omit-frame-pointer                                            <span class="Operator">$</span>
+           -fno-exceptions                                                    <span class="Operator">$</span>
+           -fno-rtti                                                          <span class="Operator">$</span>
+           -fno-strict-aliasing
+
+CompilerFlags <span class="Operator">=</span> -isystem include                                              <span class="Operator">$</span>
+                -Wall -Wextra -Wmove -Werror -pedantic -Weverything -Wpadded  <span class="Operator">$</span>
+                 <span class="Identifier">$NonErrorWarnings</span>                                            <span class="Operator">$</span>
+                 -std=c++14                                                   <span class="Operator">$</span>
+                 -mavx <span class="Identifier">$Optimisation</span>                                          <span class="Operator">$</span>
+                 -fdeclspec -ffast-math                                       <span class="Operator">$</span>
+                 <span class="Identifier">$Features</span>                                                    <span class="Operator">$</span>
+                 <span class="Identifier">$DisabledWarnings</span>
+
+Linker <span class="Operator">=</span> clang++
+Libs <span class="Operator">=</span> -Llibs         <span class="Operator">$</span>
+       -limgui.lib    <span class="Operator">$</span>
+       -lglad.lib     <span class="Operator">$</span>
+       -lglfw3.lib    <span class="Operator">$</span>
+       -lopengl32.lib <span class="Operator">$</span>
+       -lkernel32.lib <span class="Operator">$</span>
+       -luser32.lib   <span class="Operator">$</span>
+       -lgdi32.lib    <span class="Operator">$</span>
+       -lshell32.lib  <span class="Operator">$</span>
+
+CommonLinkerFlags <span class="Operator">=</span> --for-linker=-nodefaultlib:libcmt
+LinkerFlags <span class="Operator">=</span>  -fsanitize=address,undefined,integer <span class="Identifier">$Libs</span>
+<span class="Comment">#LinkerFlags = $CommonLinkerFlags $Libs --for-linker=-opt:ref</span>
+
+<span class="Keyword">rule</span> compile
+  <span class="Statement">command</span> <span class="Operator">=</span> <span class="Identifier">$Compiler</span> <span class="Identifier">$CompilerFlags</span> -c <span class="Identifier">$in</span> -o <span class="Identifier">$out</span>
+  <span class="Statement">description</span> <span class="Operator">=</span> Compile <span class="Identifier">$out</span>
+  <span class="Statement">pool</span> <span class="Operator">=</span> console
+
+<span class="Keyword">rule</span> link
+  <span class="Statement">command</span> <span class="Operator">=</span> <span class="Identifier">$Linker</span> <span class="Identifier">$LinkerFlags</span> <span class="Identifier">$in</span> -o<span class="Identifier">$out</span>
+  <span class="Statement">description</span> <span class="Operator">=</span> Link <span class="Identifier">$out</span>
+  <span class="Statement">pool</span> <span class="Operator">=</span> console
+
+<span class="Keyword">rule</span> run_this
+  <span class="Statement">command</span> <span class="Operator">=</span> <span class="Identifier">$in</span>
+  <span class="Statement">description</span> <span class="Operator">=</span> Run <span class="Identifier">$in</span>
+
+<span class="Keyword">rule</span> make_tags
+  <span class="Statement">command</span> <span class="Operator">=</span> ctags -R <span class="Identifier">$in</span>
+  <span class="Statement">description</span> <span class="Operator">=</span> CTags
+
+
+<span class="Keyword">build</span> tags<span class="Operator">:</span> make_tags ./code
+<span class="Keyword">build</span> sabre.o<span class="Operator">:</span> compile code/sabre.cc
+<span class="Keyword">build</span> svo.o<span class="Operator">:</span> compile code/svo.cc
+<span class="Keyword">build</span> shaders.o<span class="Operator">:</span> compile code/shaders.cc
+<span class="Keyword">build</span> import.o<span class="Operator">:</span> compile code/import.cc
+<span class="Keyword">build</span> render.o<span class="Operator">:</span> compile code/render.cc
+<span class="Keyword">build</span> noise_gen.o<span class="Operator">:</span> compile code/noise_gen.cc
+
+<span class="Keyword">build</span> sabre.exe<span class="Operator">:</span> link sabre.o svo.o shaders.o import.o render.o noise_gen.o <span class="Operator">|</span> tags
+
+<span class="Keyword">build</span> run phony<span class="Operator">:</span> run_this sabre.exe
+
+<span class="Keyword">default</span> sabre.exe
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

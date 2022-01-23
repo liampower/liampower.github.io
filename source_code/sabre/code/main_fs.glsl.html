@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/main_fs.glsl.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="glsl">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Constant { color: #cf6b4c; }
+.Identifier { color: #99ad6a; }
+.Conditional { color: #ffcc33; }
+.Statement { color: #ffcc33; }
+.PreProc { color: #ba9875; }
+.Function { color: #ba9875; }
+.Comment { color: #707070; }
+.StorageClass { color: #ffcc33; }
+.Type { color: #ffcc33; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#version 450 core</span>
+
+<span class="StorageClass">out</span> <span class="Type">vec4</span> FragCr;
+
+<span class="StorageClass">uniform</span> <span class="Type">sampler2D</span> OutputTextureUniform;
+
+<span class="Structure">struct</span> <span class="Identifier">luma</span>
+{
+    <span class="Type">float</span> N, S, E, W, M;
+    <span class="Type">float</span> Min, Max, Contrast;
+
+    <span class="Type">float</span> NE, NW, SE, SW;
+};
+
+<span class="Structure">struct</span> <span class="Identifier">edge</span>
+{
+    <span class="Type">bool</span> Horz;
+    <span class="Type">float</span> StepSize;
+};
+
+
+<span class="StorageClass">in</span> <span class="Type">vec2</span> UV;
+
+
+<span class="Type">float</span> ComputeBlendFactor(luma L)
+{
+    <span class="Type">float</span> F = <span class="Constant">2.0</span> * (L.N + L.E + L.S + L.W);
+    F += L.NE + L.NW + L.SE + L.SW;
+    F *= <span class="Constant">1</span>/<span class="Constant">12.0</span>;
+    F = <span class="Function">abs</span>(F - L.M);
+    F = <span class="Function">clamp</span>(F / L.Contrast, <span class="Constant">0</span>, <span class="Constant">1</span>);
+    <span class="Type">float</span> B = <span class="Function">smoothstep</span>(<span class="Constant">0</span>, <span class="Constant">1</span>, F);
+
+    <span class="Statement">return</span> B*B*<span class="Constant">0.75</span>;
+}
+
+edge ComputeEdge(<span class="StorageClass">in</span> luma L)
+{
+    edge E;
+    <span class="Type">float</span> HorzContrast =
+        <span class="Function">abs</span>(L.N + L.S - <span class="Constant">2</span> * L.M) * <span class="Constant">2</span> +
+        <span class="Function">abs</span>(L.NE + L.SE - <span class="Constant">2</span> * L.E) +
+        <span class="Function">abs</span>(L.NW + L.SW - <span class="Constant">2</span> * L.W);
+    <span class="Type">float</span> VertContrast =
+        <span class="Function">abs</span>(L.E + L.W - <span class="Constant">2</span> * L.M) * <span class="Constant">2</span> +
+        <span class="Function">abs</span>(L.NE + L.NW - <span class="Constant">2</span> * L.N) +
+        <span class="Function">abs</span>(L.SE + L.SW - <span class="Constant">2</span> * L.S);
+
+    E.Horz = HorzContrast &gt;= VertContrast;
+    E.StepSize = E.Horz ? <span class="Constant">1</span>/<span class="Constant">1024.0</span> : <span class="Constant">1</span>/<span class="Constant">1024.0</span>;
+    <span class="Type">float</span> pLuminance = E.Horz ? L.N : L.E;
+    <span class="Type">float</span> nLuminance = E.Horz ? L.S : L.W;
+    <span class="Type">float</span> pGradient = <span class="Function">abs</span>(pLuminance - L.M);
+    <span class="Type">float</span> nGradient = <span class="Function">abs</span>(nLuminance - L.M);
+
+    <span class="Conditional">if</span> (pGradient &lt; nGradient) {
+        E.StepSize = -E.StepSize;
+    }
+
+    <span class="Statement">return</span> E;
+}
+
+luma SampleLuma(<span class="Type">vec2</span> UV)
+{
+    <span class="StorageClass">const</span> <span class="Type">vec2</span> Offsets[<span class="Constant">8</span>] = {
+        <span class="Type">vec2</span>(<span class="Constant">0</span>, <span class="Constant">1</span>),
+        <span class="Type">vec2</span>(<span class="Constant">1</span>, <span class="Constant">0</span>),
+        <span class="Type">vec2</span>(<span class="Constant">0</span>, -<span class="Constant">1</span>),
+        <span class="Type">vec2</span>(-<span class="Constant">1</span>, <span class="Constant">0</span>),
+
+        <span class="Type">vec2</span>(<span class="Constant">1</span>, <span class="Constant">1</span>),
+        <span class="Type">vec2</span>(-<span class="Constant">1</span>, <span class="Constant">1</span>),
+        <span class="Type">vec2</span>(<span class="Constant">1</span>, -<span class="Constant">1</span>),
+        <span class="Type">vec2</span>(-<span class="Constant">1</span>, -<span class="Constant">1</span>),
+    };
+    <span class="StorageClass">const</span> <span class="Type">float</span> Ts = <span class="Constant">1</span>/<span class="Constant">1024.0</span>;
+
+    <span class="Type">float</span> M = <span class="Function">texture</span>(OutputTextureUniform, UV)<span class="Identifier">.g</span>;
+    <span class="Type">float</span> N = <span class="Function">texture</span>(OutputTextureUniform, UV + Offsets[<span class="Constant">0</span>]*Ts)<span class="Identifier">.g</span>;
+    <span class="Type">float</span> E = <span class="Function">texture</span>(OutputTextureUniform, UV + Offsets[<span class="Constant">1</span>]*Ts)<span class="Identifier">.g</span>;
+    <span class="Type">float</span> S = <span class="Function">texture</span>(OutputTextureUniform, UV + Offsets[<span class="Constant">2</span>]*Ts)<span class="Identifier">.g</span>;
+    <span class="Type">float</span> W = <span class="Function">texture</span>(OutputTextureUniform, UV + Offsets[<span class="Constant">3</span>]*Ts)<span class="Identifier">.g</span>;
+    <span class="Type">float</span> NE = <span class="Function">texture</span>(OutputTextureUniform, UV + Offsets[<span class="Constant">4</span>]*Ts)<span class="Identifier">.g</span>;
+    <span class="Type">float</span> NW = <span class="Function">texture</span>(OutputTextureUniform, UV + Offsets[<span class="Constant">5</span>]*Ts)<span class="Identifier">.g</span>;
+    <span class="Type">float</span> SE = <span class="Function">texture</span>(OutputTextureUniform, UV + Offsets[<span class="Constant">6</span>]*Ts)<span class="Identifier">.g</span>;
+    <span class="Type">float</span> SW = <span class="Function">texture</span>(OutputTextureUniform, UV + Offsets[<span class="Constant">7</span>]*Ts)<span class="Identifier">.g</span>;
+
+    <span class="Type">float</span> Min = <span class="Function">min</span>(<span class="Function">min</span>(<span class="Function">min</span>(<span class="Function">min</span>(M, N), E), S), W);
+    <span class="Type">float</span> Max = <span class="Function">max</span>(<span class="Function">max</span>(<span class="Function">max</span>(<span class="Function">max</span>(M, N), E), S), W);
+
+    <span class="Type">float</span> Contrast = Max - Min;
+
+    <span class="Statement">return</span> luma(N, S, E, W, M, Min, Max, Contrast, NE, NW, SE, SW);
+}
+
+<span class="Type">void</span> main()
+{
+    FragCr = <span class="Function">texture</span>(OutputTextureUniform, UV);
+    <span class="Conditional">if</span> (FragCr<span class="Identifier">.a</span> != <span class="Constant">1</span>)
+    {
+        <span class="StorageClass">const</span> <span class="Type">float</span> Q = <span class="Constant">1</span>/<span class="Constant">16.0</span>;
+        <span class="StorageClass">const</span> <span class="Type">vec2</span> Offsets[<span class="Constant">8</span>] = {
+            <span class="Type">vec2</span>(<span class="Constant">0</span>, <span class="Constant">1</span>),
+            <span class="Type">vec2</span>(<span class="Constant">1</span>, <span class="Constant">0</span>),
+            <span class="Type">vec2</span>(<span class="Constant">0</span>, -<span class="Constant">1</span>),
+            <span class="Type">vec2</span>(-<span class="Constant">1</span>, <span class="Constant">0</span>),
+
+            <span class="Type">vec2</span>(<span class="Constant">1</span>, <span class="Constant">1</span>),
+            <span class="Type">vec2</span>(-<span class="Constant">1</span>, <span class="Constant">1</span>),
+            <span class="Type">vec2</span>(<span class="Constant">1</span>, -<span class="Constant">1</span>),
+            <span class="Type">vec2</span>(-<span class="Constant">1</span>, -<span class="Constant">1</span>),
+        };
+        <span class="Type">vec4</span> A = <span class="Function">texture</span>(OutputTextureUniform, UV+Offsets[<span class="Constant">0</span>]*Q);
+        <span class="Type">vec4</span> B = <span class="Function">texture</span>(OutputTextureUniform, UV+Offsets[<span class="Constant">1</span>]*Q);
+        <span class="Type">vec4</span> C = <span class="Function">texture</span>(OutputTextureUniform, UV+Offsets[<span class="Constant">2</span>]*Q);
+        <span class="Type">vec4</span> D = <span class="Function">texture</span>(OutputTextureUniform, UV+Offsets[<span class="Constant">3</span>]*Q);
+        <span class="Type">vec4</span> E = <span class="Function">texture</span>(OutputTextureUniform, UV+Offsets[<span class="Constant">4</span>]*Q);
+        <span class="Type">vec4</span> F = <span class="Function">texture</span>(OutputTextureUniform, UV+Offsets[<span class="Constant">5</span>]*Q);
+        <span class="Type">vec4</span> G = <span class="Function">texture</span>(OutputTextureUniform, UV+Offsets[<span class="Constant">6</span>]*Q);
+        <span class="Type">vec4</span> H = <span class="Function">texture</span>(OutputTextureUniform, UV+Offsets[<span class="Constant">7</span>]*Q);
+
+        <span class="Comment">//vec4 Bf = vec4(0.5, 0.5, 0.5, 1.0);</span>
+        <span class="Type">vec4</span> K = A + B + C + D + E + F + G + H;
+        K *= <span class="Constant">1</span>/<span class="Constant">8.0</span>;
+        K<span class="Identifier">.a</span> = <span class="Constant">1.0</span>;
+        FragCr = K<span class="Identifier">.rgba</span>;
+        <span class="Comment">//FragCr = mix(E, mix(H, mix(A, B, Bf), Bf), Bf);</span>
+        <span class="Comment">/*</span><span class="Comment">vec4 D = A - vec4(1, 0, 1, 0);</span>
+<span class="Comment">        D = max(D, B - vec4(1, 0, 1, 0));</span>
+<span class="Comment">        D = normalize(D);</span><span class="Comment">*/</span>
+
+    }
+}
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->
