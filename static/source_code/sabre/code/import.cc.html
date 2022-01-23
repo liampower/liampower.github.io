@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/import.cc.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="cpp">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Todo { color: #cf6b4c; }
+.Constant { color: #cf6b4c; }
+.Operator { color: #ba9875; }
+.Conditional { color: #ffcc33; }
+.Statement { color: #ffcc33; }
+.PreProc { color: #ba9875; }
+.Type { color: #ffcc33; }
+.Special { color: #ba9875; }
+.StorageClass { color: #ffcc33; }
+.Comment { color: #707070; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#include </span><span class="Constant">&lt;cstdio&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;cassert&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;cmath&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;xmmintrin.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;smmintrin.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;set&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;unordered_map&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;deque&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;stack&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;vector&gt;</span>
+
+<span class="PreProc">#define STB_IMAGE_IMPLEMENTATION</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;stb_image.h&gt;</span>
+
+<span class="PreProc">#define CGLTF_IMPLEMENTATION</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;cgltf.h&gt;</span>
+
+<span class="PreProc">#include </span><span class="Constant">&quot;sabre.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;svo.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;vecmath.hh&quot;</span>
+
+<span class="Statement">using</span> <span class="Structure">namespace</span> vm;
+
+<span class="Structure">typedef</span> __m128 m128;
+
+<span class="Structure">struct</span> tri3
+{
+    vec3 V0;
+    vec3 V1;
+    vec3 V2;
+};
+
+
+<span class="Structure">struct</span> img
+{
+    u32 Width;
+    u32 Height;
+    u32 Channels;
+    stbi_uc* Pixels;
+};
+
+
+<span class="Structure">struct</span> tri_data
+{
+    tri3 T;
+    vec3 Normal;
+
+    vec2 TexCoord[<span class="Constant">3</span>]; <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment"> Split into different table</span>
+    cgltf_material* Material;
+};
+
+
+<span class="Structure">struct</span> material_data
+{
+    std::vector&lt;img&gt; Images;
+    std::vector&lt;cgltf_material*&gt; Material;
+};
+
+<span class="Structure">struct</span> tri_buffer
+{
+    u32      TriangleCount;
+    tri_data Triangles[<span class="Constant">1</span>];
+};
+
+
+<span class="Structure">struct</span> pos_attrib
+{
+    f32 V[<span class="Constant">3</span>];
+};
+
+
+<span class="Structure">struct</span> texcoord_attrib
+{
+    f32 V[<span class="Constant">2</span>];
+};
+
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u64
+U64Hash(u64 X)
+{
+    X = (X ^ (X &gt;&gt; <span class="Constant">30</span>)) * UINT64_C(<span class="Constant">0xbf58476d1ce4e5b9</span>);
+    X = (X ^ (X &gt;&gt; <span class="Constant">27</span>)) * UINT64_C(<span class="Constant">0x94d049bb133111eb</span>);
+    X = X ^ (X &gt;&gt; <span class="Constant">31</span>);
+    <span class="Statement">return</span> X;
+}
+
+<span class="Structure">struct</span> u64_hash
+{
+    <span class="StorageClass">constexpr</span> <span class="Type">inline</span> <span class="Type">size_t</span>
+    <span class="Operator">operator</span>()(<span class="StorageClass">const</span> u64&amp; Element) <span class="StorageClass">const</span>
+    {
+        <span class="Statement">return</span> <span class="Statement">static_cast</span>&lt;<span class="Type">size_t</span>&gt;(U64Hash(Element));
+    }
+};
+
+
+<span class="Statement">using</span> morton_map = std::unordered_map&lt;morton_key, vec3, u64_hash&gt;;
+<span class="Statement">using</span> tex_cache = std::unordered_map&lt;cgltf_image*, img&gt;;
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+DecodeTextureImage(<span class="StorageClass">const</span> cgltf_buffer_view* <span class="StorageClass">const</span> Tex, img* <span class="StorageClass">const</span> ImgOut)
+{
+    <span class="Type">int</span> Width, Height, Channels;
+    stbi_uc* ImgData = <span class="Statement">static_cast</span>&lt;stbi_uc*&gt;(Tex-&gt;buffer-&gt;data) + Tex-&gt;offset;
+    stbi_uc* Pixels = stbi_load_from_memory(ImgData,
+                                            <span class="Statement">static_cast</span>&lt;<span class="Type">int</span>&gt;(Tex-&gt;size),
+                                            &amp;Width,
+                                            &amp;Height,
+                                            &amp;Channels,
+                                            <span class="Constant">0</span>);
+    assert(Pixels);
+
+    *ImgOut = img{ u32(Width), u32(Height), u32(Channels), Pixels };
+}
+
+
+<span class="StorageClass">static</span> tex_cache
+CreateImageCache(cgltf_image* Images, cgltf_size ImageCount)
+{
+    tex_cache TextureCache;
+
+    <span class="Statement">for</span> (cgltf_size ImgIndex = <span class="Constant">0</span>; ImgIndex &lt; ImageCount; ++ImgIndex)
+    {
+        img ImgData;
+        DecodeTextureImage(Images[ImgIndex].buffer_view, &amp;ImgData);
+        TextureCache.emplace(&amp;Images[ImgIndex], ImgData);
+    }
+
+    <span class="Statement">return</span> TextureCache;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+DeleteImageCache(<span class="StorageClass">const</span> tex_cache&amp; TexCache)
+{
+    <span class="Statement">for</span> (<span class="Type">auto</span> It = TexCache.begin(); It != TexCache.end(); ++It)
+    {
+        stbi_image_free(It-&gt;second.Pixels);
+    }
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+BarycentricCoords(vec3 V0, vec3 V1, vec3 V2, vec3 X)
+{
+    vec3 Barycentric;
+
+    vec3 E0 = V1 - V0;
+    vec3 E1 = V2 - V0;
+    vec3 EX = X - V0;
+
+    f32 D00 = Dot(E0, E0);
+    f32 D01 = Dot(E0, E1);
+    f32 D11 = Dot(E1, E1);
+    f32 D20 = Dot(EX, E0);
+    f32 D21 = Dot(EX, E1);
+
+    f32 Denom = (D00 * D11) - (D01 * D01);
+    f32 SafeRatio = (Denom == <span class="Constant">0.0f</span>) ? <span class="Constant">1.0f</span> : (<span class="Constant">1.0f</span> / Denom);
+    Barycentric.Y = (D11 * D20 - D01 * D21) * SafeRatio;
+    Barycentric.Z = (D00 * D21 - D01 * D20) * SafeRatio;
+    Barycentric.X = <span class="Constant">1.0f</span> - Barycentric.Y - Barycentric.Z;
+
+    <span class="Statement">return</span> Barycentric;
+}
+
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+ComputeTriangleNormal(vec3 V0, vec3 V1, vec3 V2)
+{
+    vec3 E0 = V1 - V0;
+    vec3 E1 = V2 - V0;
+
+    <span class="Statement">return</span> Normalize(Cross(E1, E0));
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+SampleMaterialColour(<span class="StorageClass">const</span> cgltf_material* <span class="StorageClass">const</span> Mat, vec2 UV, <span class="StorageClass">const</span> std::unordered_map&lt;cgltf_image*, img&gt;&amp; TexCache)
+{
+    <span class="Comment">// Figure out where in the material to sample</span>
+    <span class="Conditional">if</span> (Mat-&gt;has_pbr_metallic_roughness)
+    {
+        <span class="Comment">// Sample the metallic texture</span>
+        <span class="StorageClass">const</span> cgltf_pbr_metallic_roughness* R = &amp;Mat-&gt;pbr_metallic_roughness;
+
+        vec3 BaseColourFactor{
+            R-&gt;base_color_factor[<span class="Constant">0</span>],
+            R-&gt;base_color_factor[<span class="Constant">1</span>],
+            R-&gt;base_color_factor[<span class="Constant">2</span>],
+        };
+
+        cgltf_texture* BaseColourTex = R-&gt;base_color_texture.texture;
+        <span class="Conditional">if</span> (BaseColourTex &amp;&amp; BaseColourTex-&gt;image)
+        {
+            img Img = TexCache.at(BaseColourTex-&gt;image);
+
+            assert(Img.Pixels);
+
+            u32 TexelX = u32(f32(Img.Width) * UV.X);
+            u32 TexelY = u32(f32(Img.Height) * UV.Y);
+            assert(TexelX &lt; Img.Width &amp;&amp; TexelY &lt; Img.Height);
+
+            stbi_uc* Pixel = &amp;Img.Pixels[Img.Channels*(TexelY * Img.Width + TexelX)];
+            <span class="Conditional">if</span> (<span class="Constant">3</span> == Img.Channels || <span class="Constant">4</span> == Img.Channels)
+            {
+                f32 Red = f32(Pixel[<span class="Constant">0</span>]) / <span class="Constant">255.0f</span>;
+                f32 Green = f32(Pixel[<span class="Constant">1</span>]) / <span class="Constant">255.0f</span>;
+                f32 Blue = f32(Pixel[<span class="Constant">2</span>]) / <span class="Constant">255.0f</span>;
+
+                <span class="Statement">return</span> vec3(Red, Green, Blue) * BaseColourFactor;
+            }
+            <span class="Conditional">else</span>
+            {
+                <span class="Statement">return</span> vec3(<span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">0</span>);
+            }
+        }
+        <span class="Conditional">else</span>
+        {
+            <span class="Statement">return</span> BaseColourFactor;
+        }
+    }
+    <span class="Conditional">else</span>
+    {
+        <span class="Statement">return</span> vec3(<span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">0</span>);
+    }
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+ComputeVoxelColour(<span class="StorageClass">const</span> tri_data* <span class="StorageClass">const</span> Tri, vec3 VoxelCentre, <span class="StorageClass">const</span> tex_cache&amp; TexCache)
+{
+    cgltf_material* Mat = Tri-&gt;Material;
+
+    <span class="Conditional">if</span> (<span class="Constant">nullptr</span> == Mat)
+    {
+        <span class="Statement">return</span> vec3{<span class="Constant">1.0f</span>, <span class="Constant">0.84f</span>, <span class="Constant">0.0f</span>};
+    }
+    <span class="Conditional">else</span>
+    {
+        <span class="Comment">// Get the voxel's UV coords within the triangle through</span>
+        <span class="Comment">// barycentric interpolation.</span>
+        vec2 V0{ Tri-&gt;TexCoord[<span class="Constant">0</span>].X, Tri-&gt;TexCoord[<span class="Constant">0</span>].Y };
+        vec2 V1{ Tri-&gt;TexCoord[<span class="Constant">1</span>].X, Tri-&gt;TexCoord[<span class="Constant">1</span>].Y };
+        vec2 V2{ Tri-&gt;TexCoord[<span class="Constant">2</span>].X, Tri-&gt;TexCoord[<span class="Constant">2</span>].Y };
+
+        vec3 B = BarycentricCoords(Tri-&gt;T.V0, Tri-&gt;T.V1, Tri-&gt;T.V2, VoxelCentre);
+        vec2 VoxelUV;
+        VoxelUV.X = fabsf(fmod(V0.X + B.Y*(V1.X - V0.X) + B.Z*(V2.X - V0.X), <span class="Constant">1.0f</span>));
+        VoxelUV.Y = fabsf(fmod(V0.Y + B.Y*(V1.Y - V0.Y) + B.Z*(V2.Y - V0.Y), <span class="Constant">1.0f</span>));
+
+        <span class="Statement">return</span> SampleMaterialColour(Mat, VoxelUV, TexCache);
+    }
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">bool</span>
+TriangleAABBIntersection(m128 Centre, m128 Radius, m128 Tri[<span class="Constant">3</span>])
+{
+    <span class="Comment">// Note: This code is not likely to be particularly faster than</span>
+    <span class="Comment">// a scalar version; it exists more as a learning vehicle for</span>
+    <span class="Comment">// SSE intrinsics.</span>
+    <span class="Comment">//</span>
+    <span class="Comment">// The formula used is the Askine-Moller box-triangle intersection</span>
+    <span class="Comment">// test.</span>
+
+    <span class="StorageClass">const</span> m128 F32SgnMsk = _mm_set1_ps(-<span class="Constant">0.0f</span>);
+    <span class="StorageClass">const</span> m128 Zero4 = _mm_set1_ps(<span class="Constant">0.0f</span>);
+
+    <span class="Comment">// Stackoverflow: <a href="https://stackoverflow.com/a/20084034/3121161">https://stackoverflow.com/a/20084034/3121161</a></span>
+    m128 NRadius = _mm_xor_ps(Radius, F32SgnMsk);
+
+    <span class="Comment">// Transformed triangle vertices</span>
+    m128 V0 = _mm_sub_ps(Tri[<span class="Constant">0</span>], Centre);
+    m128 V1 = _mm_sub_ps(Tri[<span class="Constant">1</span>], Centre);
+    m128 V2 = _mm_sub_ps(Tri[<span class="Constant">2</span>], Centre);
+
+    <span class="Comment">// Triangle edge vectors</span>
+    m128 E0 = _mm_sub_ps(V1, V0);
+    m128 E1 = _mm_sub_ps(V2, V1);
+    m128 E2 = _mm_sub_ps(V0, V2);
+
+    <span class="Comment">// First test: does the bounding box of the triangle fit inside</span>
+    <span class="Comment">// the supplied min/max dimensions?</span>
+    m128 TriMin = _mm_min_ps(_mm_min_ps(V0, V1), V2);
+    <span class="Type">int</span> MinMask = _mm_movemask_ps(_mm_cmpgt_ps(TriMin, Radius));
+    <span class="Conditional">if</span> (<span class="Constant">0x7</span> &amp; MinMask) <span class="Statement">return</span> <span class="Constant">false</span>;
+
+    m128 TriMax = _mm_max_ps(_mm_max_ps(V0, V1), V2);
+    <span class="Type">int</span> MaxMask = _mm_movemask_ps(_mm_cmplt_ps(TriMax, NRadius));
+    <span class="Conditional">if</span> (<span class="Constant">0x7</span> &amp; MaxMask) <span class="Statement">return</span> <span class="Constant">false</span>;
+
+    <span class="Comment">// Msk: 3 2 1 0</span>
+    <span class="Comment">//      W Z Y X</span>
+    {
+        <span class="Comment">// Check if triangle and box overlap on the triangle's normal axis.</span>
+        m128 E1_YZXW = _mm_shuffle_ps(E1, E1, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+        m128 E0_YZXW = _mm_shuffle_ps(E0, E0, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+        m128 XP_ZXYW = _mm_sub_ps(_mm_mul_ps(E1_YZXW, E0), _mm_mul_ps(E0_YZXW, E1));
+
+        <span class="Comment">// Reshuffle to get the correct cross product</span>
+        m128 TNormal = _mm_shuffle_ps(XP_ZXYW, XP_ZXYW, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+
+        m128 Rv = _mm_sub_ps(Radius, V0);
+        m128 NRv = _mm_sub_ps(NRadius, V0);
+
+        <span class="Comment">// Positive (&gt;0) mask</span>
+        m128 Pmsk = _mm_cmpgt_ps(TNormal, _mm_set1_ps(<span class="Constant">0.0</span>));
+        m128 VMax = _mm_blendv_ps(NRv, Rv, Pmsk);
+        m128 VMin = _mm_blendv_ps(Rv, NRv, Pmsk);
+
+        <span class="Comment">// Dot product between triangle normal and the min vertex</span>
+        <span class="Comment">// <a href="https://stackoverflow.com/a/35270026/3121161">https://stackoverflow.com/a/35270026/3121161</a></span>
+        m128 Pdt = _mm_mul_ps(TNormal, VMin);
+        m128 Pdt_s = _mm_movehdup_ps(Pdt);
+        m128 Hsum = _mm_add_ps(Pdt, Pdt_s);
+        Pdt_s = _mm_movehl_ps(Pdt_s, Hsum);
+        Hsum = _mm_add_ps(Hsum, Pdt_s); <span class="Comment">// Dot in elements 0 and 2</span>
+
+        <span class="Type">int</span> Dmsk = _mm_movemask_ps(_mm_cmpgt_ps(Hsum, Zero4));
+        <span class="Conditional">if</span> (<span class="Constant">0x1</span> &amp; Dmsk) <span class="Statement">return</span> <span class="Constant">false</span>; <span class="Comment">// If d.p. &gt; 0 then return false</span>
+
+        Pdt = _mm_mul_ps(TNormal, VMax);
+        Pdt_s = _mm_movehdup_ps(Pdt);
+        Hsum = _mm_add_ps(Pdt, Pdt_s);
+        Pdt_s = _mm_movehl_ps(Pdt_s, Hsum);
+        Hsum = _mm_add_ps(Hsum, Pdt_s);
+
+        Dmsk = _mm_movemask_ps(_mm_cmplt_ps(Hsum, Zero4));
+        <span class="Conditional">if</span> (<span class="Constant">0x1</span> &amp; Dmsk) <span class="Statement">return</span> <span class="Constant">false</span>;
+
+    }
+
+    <span class="Comment">// Compute absolute value of triangle edges</span>
+    m128 F0 = _mm_andnot_ps(F32SgnMsk, E0);
+    m128 F1 = _mm_andnot_ps(F32SgnMsk, E1);
+    m128 F2 = _mm_andnot_ps(F32SgnMsk, E2);
+
+    <span class="Comment">// p0 = e0z.v0y - e0y.v0z</span>
+    <span class="Comment">// p2 = e0z.v2y - e0y.v2z</span>
+    <span class="Comment">// min = min(p0, p2), max = max(p0, p2)</span>
+    <span class="Comment">// rad = F0z*Hy + F0y*Hz</span>
+    <span class="Comment">// if min &gt; rad || max &lt; -rad return 0</span>
+    <span class="Comment">//</span>
+    <span class="Comment">// rad0 = F0z*Hy + F0y*Hz</span>
+    <span class="Comment">// rad1 = F0z*Hx + F0x*Hz</span>
+    <span class="Comment">// rad2 = F0y*Hx + F0x*Hy</span>
+    <span class="Comment">//</span>
+    m128 F0_ZZYW = _mm_shuffle_ps(F0, F0, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">2</span>));
+    m128 F0_YXXW = _mm_shuffle_ps(F0, F0, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">0</span>, <span class="Constant">1</span>));
+    m128 H_YXXW = _mm_shuffle_ps(Radius, Radius, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">0</span>, <span class="Constant">1</span>));
+    m128 H_ZZYW = _mm_shuffle_ps(Radius, Radius, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">2</span>));
+    m128 R_123 = _mm_add_ps(_mm_mul_ps(F0_ZZYW, H_YXXW), _mm_mul_ps(F0_YXXW, H_ZZYW));
+    m128 NR_123 = _mm_xor_ps(R_123, F32SgnMsk);
+    <span class="Comment">// p2_1 = e0z.v2y - e0y.v2z</span>
+    <span class="Comment">// p2_2 = e0x.v2z - e0z.v2x</span>
+    <span class="Comment">// p2_3 = e0y.v2x - e0x.v2y</span>
+
+    <span class="Comment">// p0 = e0z*v0y - e0y*v0z</span>
+    <span class="Comment">// p0 = e0x*v0z - e0z*v0x</span>
+    <span class="Comment">// p0 = e0y*v1x - e0x*v1y</span>
+
+    m128 E0_ZXYW = _mm_shuffle_ps(E0, E0, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">2</span>));
+    m128 E0_YZXW = _mm_shuffle_ps(E0, E0, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+    m128 V0YZV1X = _mm_shuffle_ps(V0, V1, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">4</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+    m128 V0ZXV1Y = _mm_shuffle_ps(V0, V1, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">5</span>, <span class="Constant">0</span>, <span class="Constant">2</span>));
+    m128 P0_123 = _mm_sub_ps(_mm_mul_ps(E0_ZXYW, V0YZV1X), _mm_mul_ps(E0_YZXW, V0ZXV1Y));
+
+    m128 V2_YZXW = _mm_shuffle_ps(V2, V2, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+    m128 V2_ZXYW = _mm_shuffle_ps(V2, V2, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">2</span>));
+    m128 P2_123 = _mm_sub_ps(_mm_mul_ps(E0_ZXYW, V2_YZXW), _mm_mul_ps(E0_YZXW, V2_ZXYW));
+
+    <span class="Comment">// Get min, max between </span>
+    m128 P_Min = _mm_min_ps(P0_123, P2_123);
+    m128 P_Max = _mm_max_ps(P0_123, P2_123);
+
+    m128 Gmsk = _mm_cmpgt_ps(P_Min, R_123);
+    m128 Lmsk = _mm_cmplt_ps(P_Max, NR_123);
+    m128 Or = _mm_or_ps(Gmsk, Lmsk);
+    <span class="Type">int</span> OutMsk = _mm_movemask_ps(Or);
+    <span class="Conditional">if</span> (OutMsk &amp; <span class="Constant">0x7</span>) <span class="Statement">return</span> <span class="Constant">false</span>;
+
+    <span class="Comment">// p0_1 = e1z.v0y - e1y.v0z</span>
+    <span class="Comment">// p0_2 = e1x.v0z - e1z.v0x</span>
+    <span class="Comment">// p0_3 = e1y.v0x - e1x.v0y</span>
+    <span class="Comment">//</span>
+    <span class="Comment">// p2_1 = e1z.v2y - e1y.v2z</span>
+    <span class="Comment">// p2_2 = e1x.v2z - e1z.v2x</span>
+    <span class="Comment">// p2_3 = e1y.v1x - e1x.v1y</span>
+
+    m128 E1_ZXYW = _mm_shuffle_ps(E1, E1, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">2</span>));
+    m128 E1_YZXW = _mm_shuffle_ps(E1, E1, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+    m128 V0_YZXW = _mm_shuffle_ps(V0, V0, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+    m128 V0_ZXYW = _mm_shuffle_ps(V0, V0, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">2</span>));
+    P0_123 = _mm_sub_ps(_mm_mul_ps(E1_ZXYW, V0_YZXW), _mm_mul_ps(E1_YZXW, V0_ZXYW));
+
+    m128 V2YV2XV1X = _mm_shuffle_ps(V2, V1, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">4</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+    m128 V2ZV2XV1Y = _mm_shuffle_ps(V2, V1, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">5</span>, <span class="Constant">0</span>, <span class="Constant">2</span>));
+    P2_123 = _mm_sub_ps(_mm_mul_ps(E1_ZXYW, V2YV2XV1X), _mm_mul_ps(E1_YZXW, V2ZV2XV1Y));
+
+
+    <span class="Comment">// rad0 = F1z.Hy + F1y.Hz</span>
+    <span class="Comment">// rad1 = F1z.Hx + F1x.Hz</span>
+    <span class="Comment">// rad2 = F1y.Hx + F1x.Hy</span>
+    m128 F1_ZZYW = _mm_shuffle_ps(F1, F1, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">2</span>));
+    m128 F1_YXXW = _mm_shuffle_ps(F1, F1, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">0</span>, <span class="Constant">1</span>));
+
+    R_123 = _mm_add_ps(_mm_mul_ps(F1_ZZYW, H_YXXW), _mm_mul_ps(F1_YXXW, H_ZZYW));
+    NR_123 = _mm_xor_ps(F32SgnMsk, R_123);
+
+    P_Min = _mm_min_ps(P0_123, P2_123);
+    P_Max = _mm_max_ps(P0_123, P2_123);
+
+    Gmsk = _mm_cmpgt_ps(P_Min, R_123);
+    Lmsk = _mm_cmplt_ps(P_Max, NR_123);
+    Or = _mm_or_ps(Gmsk, Lmsk);
+    OutMsk = _mm_movemask_ps(Or);
+    <span class="Conditional">if</span> (OutMsk &amp; <span class="Constant">0x7</span>) <span class="Statement">return</span> <span class="Constant">false</span>;
+
+    <span class="Comment">// p0_1 = e2z.v0y - e2y.v0z</span>
+    <span class="Comment">// p0_2 = e2x.v0z - e2z.v0x</span>
+    <span class="Comment">// p0_3 = e2y.v1x - e2x.v1y</span>
+    <span class="Comment">// </span>
+    <span class="Comment">// p2_1 = e2z.v1y - e2y.v1z</span>
+    <span class="Comment">// p2_2 = e2x.v1z - e2z.v1x </span>
+    <span class="Comment">// p2_3 = e2y.v2x - e2x.v2y</span>
+    <span class="Comment">//</span>
+    <span class="Comment">// rad0 = F2z.Hy + F2y.Hz</span>
+    <span class="Comment">// rad1 = F2z.Hx + F2x.Hz</span>
+    <span class="Comment">// rad2 = F2y.Hx + F2x.Hy</span>
+    m128 E2_ZXYW = _mm_shuffle_ps(E2, E2, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">2</span>));
+    m128 E2_YZXW = _mm_shuffle_ps(E2, E2, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+    P0_123 = _mm_sub_ps(_mm_mul_ps(E2_ZXYW, V0YZV1X), _mm_mul_ps(E2_YZXW, V0ZXV1Y));
+
+    m128 V1YZV2X = _mm_shuffle_ps(V1, V2, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">4</span>, <span class="Constant">2</span>, <span class="Constant">1</span>));
+    m128 V1ZXV2Y = _mm_shuffle_ps(V1, V2, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">5</span>, <span class="Constant">0</span>, <span class="Constant">2</span>));
+    P2_123 = _mm_sub_ps(_mm_mul_ps(E2_ZXYW, V1YZV2X), _mm_mul_ps(E2_YZXW, V1ZXV2Y));
+
+    P_Min = _mm_min_ps(P0_123, P2_123);
+    P_Max = _mm_max_ps(P0_123, P2_123);
+
+    m128 F2_ZZYW = _mm_shuffle_ps(F2, F2, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">2</span>));
+    m128 F2_YXXW = _mm_shuffle_ps(F2, F2, _MM_SHUFFLE(<span class="Constant">3</span>, <span class="Constant">0</span>, <span class="Constant">0</span>, <span class="Constant">1</span>));
+    R_123 = _mm_add_ps(_mm_mul_ps(F2_ZZYW, H_YXXW), _mm_mul_ps(F2_YXXW, H_ZZYW));
+    NR_123 = _mm_xor_ps(F32SgnMsk, R_123);
+
+    Gmsk = _mm_cmpgt_ps(P_Min, R_123);
+    Lmsk = _mm_cmplt_ps(P_Max, NR_123);
+
+    Or = _mm_or_ps(Gmsk, Lmsk);
+    OutMsk = _mm_movemask_ps(Or);
+    <span class="Conditional">if</span> (OutMsk &amp; <span class="Constant">0x7</span>) <span class="Statement">return</span> <span class="Constant">false</span>;
+
+    <span class="Statement">return</span> <span class="Constant">true</span>;
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+NormalSampler(vec3 C, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span>, <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span> UserData)
+{
+    morton_key MortonCode = EncodeMorton3(uvec3(C));
+
+    morton_map* <span class="StorageClass">const</span>* Index = (morton_map* <span class="StorageClass">const</span>*)UserData;
+    <span class="Statement">return</span> (*Index)-&gt;at(MortonCode);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+ColourSampler(vec3 C, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span>, <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span> UserData)
+{
+    morton_key MortonCode = EncodeMorton3(uvec3(C));
+    morton_map* <span class="StorageClass">const</span>* Index = (morton_map* <span class="StorageClass">const</span>*)UserData;
+
+    <span class="Statement">return</span> (*Index)-&gt;at(MortonCode);
+}
+
+<span class="StorageClass">static</span> tri_buffer*
+LoadMeshTriangles(<span class="StorageClass">const</span> cgltf_data* <span class="StorageClass">const</span> MeshData, vec3 Origin)
+{
+    cgltf_mesh* Mesh = &amp;MeshData-&gt;meshes[<span class="Constant">0</span>];
+
+    usize LastTri = <span class="Constant">0</span>;
+    tri_buffer* TriBuffer = <span class="Constant">nullptr</span>;
+
+    <span class="Comment">// Locate the primitive entry for the mesh's triangle data block.</span>
+    <span class="Comment">// We do not handle non-triangle meshes.</span>
+    <span class="Statement">for</span> (cgltf_size PrimIndex = <span class="Constant">0</span>; PrimIndex &lt; Mesh-&gt;primitives_count; ++PrimIndex)
+    {
+        cgltf_primitive* Prim = &amp;Mesh-&gt;primitives[PrimIndex];
+
+        <span class="Conditional">if</span> (cgltf_primitive_type_triangles == Prim-&gt;type)
+        {
+            <span class="Conditional">if</span> (Prim-&gt;indices)
+            {
+                cgltf_size IndexCount = Prim-&gt;indices-&gt;count;
+                u32* IndexBuffer = (u32*) malloc(IndexCount * <span class="Operator">sizeof</span>(u32));
+                assert(IndexBuffer);
+
+                <span class="Comment">// Copy the indices into the index buffer.</span>
+                <span class="Statement">for</span> (cgltf_size Elem = <span class="Constant">0</span>; Elem &lt; IndexCount; ++Elem)
+                {
+                    IndexBuffer[Elem] = (u32) cgltf_accessor_read_index(Prim-&gt;indices, Elem);
+                }
+
+                usize TriCount = IndexCount / <span class="Constant">3</span>;
+
+
+                <span class="Conditional">if</span> (<span class="Constant">nullptr</span> == TriBuffer)
+                {
+                    TriBuffer = (tri_buffer*) calloc(<span class="Constant">1</span>, <span class="Operator">sizeof</span>(tri_buffer) + (<span class="Operator">sizeof</span>(tri_data) * TriCount));
+                    assert(TriBuffer);
+                }
+                <span class="Conditional">else</span>
+                {
+                    TriBuffer = (tri_buffer*) realloc(TriBuffer, <span class="Operator">sizeof</span>(tri_buffer) + (<span class="Operator">sizeof</span>(tri_data) * (TriBuffer-&gt;TriangleCount + TriCount)));
+                    assert(TriBuffer);
+                }
+
+                TriBuffer-&gt;TriangleCount += TriCount;
+
+                pos_attrib* PosBuffer = <span class="Constant">nullptr</span>;
+                texcoord_attrib* TexCoordBuffer = <span class="Constant">nullptr</span>;
+                <span class="Statement">for</span> (cgltf_size AttribIndex = <span class="Constant">0</span>; AttribIndex &lt; Prim-&gt;attributes_count; ++AttribIndex)
+                {
+                    cgltf_attribute* Attrib = &amp;Prim-&gt;attributes[AttribIndex];
+
+                    cgltf_accessor* Accessor = Attrib-&gt;data;
+
+                    <span class="Conditional">if</span> (cgltf_attribute_type_position == Attrib-&gt;type)
+                    {
+                        cgltf_size PosCount = Accessor-&gt;count;
+
+                        assert(cgltf_num_components(Accessor-&gt;type) == <span class="Constant">3</span>);
+                        PosBuffer = (pos_attrib*) malloc(<span class="Operator">sizeof</span>(pos_attrib) * PosCount);
+                        assert(PosBuffer);
+
+                        cgltf_accessor_unpack_floats(Accessor, (f32*)PosBuffer, PosCount*<span class="Constant">3</span>);
+                    }
+                    <span class="Conditional">else</span> <span class="Conditional">if</span> (cgltf_attribute_type_texcoord == Attrib-&gt;type)
+                    {
+                        <span class="Comment">// Load texcoords into a temporary buffer</span>
+                        cgltf_size TexCoordCount = Accessor-&gt;count;
+                        assert(cgltf_num_components(Accessor-&gt;type) == <span class="Constant">2</span>);
+                        TexCoordBuffer = (texcoord_attrib*)malloc(<span class="Operator">sizeof</span>(texcoord_attrib) * TexCoordCount);
+                        assert(TexCoordBuffer);
+                        cgltf_accessor_unpack_floats(Accessor, (f32*)TexCoordBuffer, TexCoordCount * <span class="Constant">2</span>);
+                    }
+                }
+
+                <span class="Statement">for</span> (cgltf_size TriIndex = <span class="Constant">0</span>; TriIndex &lt; (TriCount*<span class="Constant">3</span>); TriIndex+=<span class="Constant">3</span>)
+                {
+                    tri3 T;
+
+                    <span class="Comment">// Load the indices</span>
+                    u32 I0 = IndexBuffer[TriIndex];
+                    u32 I1 = IndexBuffer[TriIndex + <span class="Constant">1</span>];
+                    u32 I2 = IndexBuffer[TriIndex + <span class="Constant">2</span>];
+                    pos_attrib P0 = PosBuffer[I0];
+                    pos_attrib P1 = PosBuffer[I1];
+                    pos_attrib P2 = PosBuffer[I2];
+
+                    <span class="Conditional">if</span> (TexCoordBuffer)
+                    {
+                        texcoord_attrib T0 = TexCoordBuffer[I0];
+                        texcoord_attrib T1 = TexCoordBuffer[I1];
+                        texcoord_attrib T2 = TexCoordBuffer[I2];
+
+                        <span class="Conditional">if</span> (Prim-&gt;material)
+                        {
+                            TriBuffer-&gt;Triangles[LastTri].Material = Prim-&gt;material;
+                        }
+
+                        TriBuffer-&gt;Triangles[LastTri].TexCoord[<span class="Constant">0</span>] = vec2{ T0.V[<span class="Constant">0</span>], T0.V[<span class="Constant">1</span>] };
+                        TriBuffer-&gt;Triangles[LastTri].TexCoord[<span class="Constant">1</span>] = vec2{ T1.V[<span class="Constant">0</span>], T1.V[<span class="Constant">1</span>] };
+                        TriBuffer-&gt;Triangles[LastTri].TexCoord[<span class="Constant">2</span>] = vec2{ T2.V[<span class="Constant">0</span>], T2.V[<span class="Constant">1</span>] };
+                    }
+
+                    vec3 K0 = vec3(P0.V[<span class="Constant">0</span>], (P0.V[<span class="Constant">1</span>]), (P0.V[<span class="Constant">2</span>]));
+                    vec3 K1 = vec3(P1.V[<span class="Constant">0</span>], (P1.V[<span class="Constant">1</span>]), (P1.V[<span class="Constant">2</span>]));
+                    vec3 K2 = vec3(P2.V[<span class="Constant">0</span>], (P2.V[<span class="Constant">1</span>]), (P2.V[<span class="Constant">2</span>]));
+
+                    T.V0 = K0 - Origin;
+                    T.V1 = K1 - Origin;
+                    T.V2 = K2 - Origin;
+
+                    TriBuffer-&gt;Triangles[LastTri].T = T;
+                    TriBuffer-&gt;Triangles[LastTri].Normal = ComputeTriangleNormal(T.V0, T.V1, T.V2);
+
+                    ++LastTri;
+                }
+
+                <span class="Conditional">if</span> (PosBuffer) free(PosBuffer);
+                <span class="Conditional">if</span> (TexCoordBuffer) free(TexCoordBuffer);
+
+                <span class="Comment">// Didn't find any positions, free the index buffer and exit.</span>
+                free(IndexBuffer);
+            }
+
+        }
+    }
+
+    <span class="Comment">// Mesh does not have triangle primitives; bail out</span>
+    <span class="Statement">return</span> TriBuffer;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+GetOctantCentre(u32 Oct, u32 Scale, vec3 ParentCentreP)
+{
+    assert(Scale &gt; <span class="Constant">0</span>);
+
+    f32 Rad = (f32)(Scale &gt;&gt; <span class="Constant">1U</span>);
+    f32 X = (Oct &amp; <span class="Constant">1U</span>) ? <span class="Constant">1.0f</span> : -<span class="Constant">1.0f</span>;
+    f32 Y = (Oct &amp; <span class="Constant">2U</span>) ? <span class="Constant">1.0f</span> : -<span class="Constant">1.0f</span>;
+    f32 Z = (Oct &amp; <span class="Constant">4U</span>) ? <span class="Constant">1.0f</span> : -<span class="Constant">1.0f</span>;
+
+    <span class="Statement">return</span> ParentCentreP + (vec3(X, Y, Z) * Rad);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+MeshMinMaxDimensions(<span class="StorageClass">const</span> cgltf_mesh* <span class="StorageClass">const</span> Mesh, vec3&amp; MinOut, vec3&amp; MaxOut)
+{
+    <span class="Comment">// Check the max/min values of each primitive</span>
+    vec3 Min(F32_MAX);
+    vec3 Max(F32_MIN);
+
+    <span class="Statement">for</span> (u32 PrimIndex = <span class="Constant">0</span>; PrimIndex &lt; Mesh-&gt;primitives_count; ++PrimIndex)
+    {
+        <span class="StorageClass">const</span> cgltf_primitive* <span class="StorageClass">const</span> Prim = &amp;Mesh-&gt;primitives[PrimIndex];
+        cgltf_accessor* PosAttr = <span class="Constant">nullptr</span>;
+        <span class="Statement">for</span> (u32 AttrIndex = <span class="Constant">0</span>; AttrIndex &lt; Prim-&gt;attributes_count; ++AttrIndex)
+        {
+            <span class="Conditional">if</span> (cgltf_attribute_type_position == Prim-&gt;attributes[AttrIndex].type)
+            {
+                PosAttr = Prim-&gt;attributes[AttrIndex].data;
+            }
+        }
+
+        <span class="Conditional">if</span> (<span class="Constant">nullptr</span> != PosAttr &amp;&amp; PosAttr-&gt;has_min)
+        {
+            f32* Mins = PosAttr-&gt;min;
+            f32* Maxes = PosAttr-&gt;max;
+
+            <span class="Conditional">if</span> (Mins[<span class="Constant">0</span>] &lt; Min.X) Min.X = Mins[<span class="Constant">0</span>];
+            <span class="Conditional">if</span> (Mins[<span class="Constant">1</span>] &lt; Min.Y) Min.Y = Mins[<span class="Constant">1</span>];
+            <span class="Conditional">if</span> (Mins[<span class="Constant">2</span>] &lt; Min.Z) Min.Z = Mins[<span class="Constant">2</span>];
+
+            <span class="Conditional">if</span> (Maxes[<span class="Constant">0</span>] &gt; Max.X) Max.X = Maxes[<span class="Constant">0</span>];
+            <span class="Conditional">if</span> (Maxes[<span class="Constant">1</span>] &gt; Max.Y) Max.Y = Maxes[<span class="Constant">1</span>];
+            <span class="Conditional">if</span> (Maxes[<span class="Constant">2</span>] &gt; Max.Z) Max.Z = Maxes[<span class="Constant">2</span>];
+        }
+    }
+
+    <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">: Try to eliminate copying here</span>
+    MinOut = Min;
+    MaxOut = Max;
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u32
+NextPowerOf2Exponent(u32 X)
+{
+    <span class="Statement">return</span> (X &gt; <span class="Constant">1U</span>) ? <span class="Constant">32U</span> - (u32)__builtin_clz(X - <span class="Constant">1U</span>)
+                    : <span class="Constant">1U</span>;
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">void</span>
+BuildTriangleIndex(u32 MaxDepth,
+                   u32 ScaleExponent,
+                   tri_buffer* Tris,
+                   std::set&lt;morton_key&gt;&amp; IndexOut,
+                   morton_map&amp; NormalsMap,
+                   morton_map&amp; ColourMap,
+                   <span class="StorageClass">const</span> tex_cache&amp; TexCache)
+{
+    <span class="Structure">struct</span> st_ctx
+    {
+        u32 Oct;
+        u32 Scale;
+        u32 Depth;
+        vec3 ParentCentre;
+    };
+
+    <span class="Comment">//std::deque&lt;st_ctx&gt; Stack;</span>
+    std::stack&lt;st_ctx&gt; Stack;
+
+    svo_bias Bias = ComputeScaleBias(MaxDepth, ScaleExponent);
+
+    u32 RootScale = <span class="Constant">1U</span> &lt;&lt; (ScaleExponent) &lt;&lt; Bias.Scale;
+    vec3 ParentCentreP = vec3(RootScale &gt;&gt; <span class="Constant">1U</span>);
+
+    st_ctx RootCtx;
+    RootCtx.Oct = <span class="Constant">0</span>;
+    RootCtx.Depth = <span class="Constant">1</span>;
+    RootCtx.Scale = RootScale &gt;&gt; <span class="Constant">1U</span>;
+    RootCtx.ParentCentre = ParentCentreP;
+
+    morton_key RootCode = EncodeMorton3(uvec3(ParentCentreP));
+
+    IndexOut.insert(RootCode);
+
+    <span class="Statement">for</span> (<span class="Type">size_t</span> TriIndex = <span class="Constant">0</span>; TriIndex &lt; Tris-&gt;TriangleCount; ++TriIndex)
+    {
+        tri3 T = Tris-&gt;Triangles[TriIndex].T;
+
+        <span class="Comment">// For every triangle, check if it is enclosed in a bounding box</span>
+        Stack.push(RootCtx);
+
+        <span class="StorageClass">alignas</span>(<span class="Constant">16</span>) m128 TriVerts[<span class="Constant">3</span>];
+        TriVerts[<span class="Constant">0</span>] = _mm_set_ps(<span class="Constant">0.0f</span>, T.V0.Z, T.V0.Y, T.V0.X);
+        TriVerts[<span class="Constant">1</span>] = _mm_set_ps(<span class="Constant">0.0f</span>, T.V1.Z, T.V1.Y, T.V1.X);
+        TriVerts[<span class="Constant">2</span>] = _mm_set_ps(<span class="Constant">0.0f</span>, T.V2.Z, T.V2.Y, T.V2.X);
+
+        <span class="Statement">while</span> (<span class="Constant">false</span> == Stack.empty())
+        {
+            st_ctx CurrentCtx = Stack.top();
+            Stack.pop();
+
+            vec3 Radius = vec3(CurrentCtx.Scale &gt;&gt; <span class="Constant">1U</span>) * Bias.InvScale;
+            <span class="StorageClass">alignas</span>(<span class="Constant">16</span>) m128 RadiusM = _mm_set_ps(<span class="Constant">0.0f</span>, Radius.Z, Radius.Y, Radius.X);
+
+            <span class="Statement">for</span> (u32 Oct = <span class="Constant">0</span>; Oct &lt; <span class="Constant">8</span>; ++Oct)
+            {
+                <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Make GetOctantCentre *only* return uvecs, then can differentiate</span>
+                <span class="Comment">// at the type level between scaled and unscaled vectors.</span>
+                vec3 Centre = GetOctantCentre(Oct, CurrentCtx.Scale, CurrentCtx.ParentCentre);
+                <span class="StorageClass">alignas</span>(<span class="Constant">16</span>) m128 CentreM = _mm_set_ps(<span class="Constant">0.0f</span>, Centre.Z*Bias.InvScale, Centre.Y*Bias.InvScale, Centre.X*Bias.InvScale);
+
+                <span class="Conditional">if</span> (TriangleAABBIntersection(CentreM, RadiusM, TriVerts))
+                {
+                    morton_key ChildVoxelCode = EncodeMorton3(uvec3(Centre));
+                    <span class="Conditional">if</span> ((CurrentCtx.Depth + <span class="Constant">1</span>) &gt;= MaxDepth)
+                    {
+                        NormalsMap.emplace(ChildVoxelCode, Tris-&gt;Triangles[TriIndex].Normal);
+                        ColourMap.emplace(ChildVoxelCode, ComputeVoxelColour(&amp;Tris-&gt;Triangles[TriIndex], Centre*Bias.InvScale, TexCache));
+                    }
+
+                    IndexOut.insert(ChildVoxelCode);
+
+                    <span class="Conditional">if</span> (CurrentCtx.Depth &lt; MaxDepth)
+                    {
+                        st_ctx NewCtx;
+                        NewCtx.Oct = Oct;
+                        NewCtx.Depth = CurrentCtx.Depth + <span class="Constant">1</span>;
+                        NewCtx.Scale = CurrentCtx.Scale &gt;&gt; <span class="Constant">1U</span>;
+                        NewCtx.ParentCentre = Centre;
+                        Stack.push(NewCtx);
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">bool</span>
+IntersectorFunction(vec3 vMin, vec3 vMax, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Tree, <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span> UserData)
+{
+    vec3 Halfsize = (vMax - vMin) * <span class="Constant">0.5f</span>;
+    vec3 Centre = ((vMin + Halfsize) * f32(<span class="Constant">1</span> &lt;&lt; Tree-&gt;Bias.Scale));
+
+    <span class="StorageClass">const</span> std::set&lt;morton_key&gt;* <span class="StorageClass">const</span>* OccupancyIndex = (<span class="StorageClass">const</span> std::set&lt;morton_key&gt;* <span class="StorageClass">const</span>*)UserData;
+
+    morton_key MortonCode = EncodeMorton3(uvec3(Centre));
+    <span class="Statement">return</span> (*OccupancyIndex)-&gt;find(MortonCode) != (*OccupancyIndex)-&gt;end();
+}
+
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> svo*
+ImportGLBFile(u32 MaxDepth, <span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> GLTFPath)
+{
+    LogInfo(<span class="Constant">&quot;Begin import of file </span><span class="Special">%s</span><span class="Constant">&quot;</span>, GLTFPath);
+    cgltf_options Options = { };
+    cgltf_data* Data = <span class="Constant">nullptr</span>;
+
+    cgltf_result Result = cgltf_parse_file(&amp;Options, GLTFPath, &amp;Data);
+    assert(cgltf_result_success == Result);
+
+    Result = cgltf_load_buffers(&amp;Options, Data, <span class="Constant">nullptr</span>);
+    assert(cgltf_result_success == Result);
+
+    Result = cgltf_validate(Data);
+    <span class="Conditional">if</span> (cgltf_result_success == Result)
+    {
+        TraceOK(<span class="Constant">&quot;GLTF validation passed&quot;</span>);
+        vec3 Min, Max;
+        MeshMinMaxDimensions(&amp;Data-&gt;meshes[<span class="Constant">0</span>], Min, Max);
+        f32 MaxDim = Maximum(HorzMax(Abs(Min)), HorzMax(Abs(Max)));
+        assert(MaxDim &gt; <span class="Constant">0</span>);
+        u32 ScaleExponent = <span class="Constant">3</span>;<span class="Comment">//NextPowerOf2Exponent(static_cast&lt;u32&gt;(ceilf(MaxDim)));</span>
+        assert(ScaleExponent &gt; <span class="Constant">0</span>);
+
+        tex_cache TexCache = CreateImageCache(Data-&gt;images, Data-&gt;images_count);
+        TraceOK(<span class="Constant">&quot;Created texture cache for </span><span class="Special">%u</span><span class="Constant"> images&quot;</span>, Data-&gt;images_count);
+
+        tri_buffer* TriangleData = LoadMeshTriangles(Data, Min);
+        TraceOK(<span class="Constant">&quot;Loaded triangle data&quot;</span>);
+
+        <span class="Conditional">if</span> (<span class="Constant">nullptr</span> == TriangleData)
+        {
+            fprintf(<span class="Constant">stderr</span>, <span class="Constant">&quot;Failed to load triangle data&quot;</span>);
+            cgltf_free(Data);
+
+            <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+        }
+
+        std::set&lt;morton_key&gt; OccupancyIndex{};
+        morton_map NormalIndex{};
+        morton_map ColourIndex{};
+
+        NormalIndex.reserve(TriangleData-&gt;TriangleCount);
+        ColourIndex.reserve(TriangleData-&gt;TriangleCount);
+        LogInfo(<span class="Constant">&quot;Scene tri count: </span><span class="Special">%u</span><span class="Constant">&quot;</span>, TriangleData-&gt;TriangleCount);
+        LogInfo(<span class="Constant">&quot;Begin triangle index construction&quot;</span>);
+        BuildTriangleIndex(MaxDepth,
+                           ScaleExponent,
+                           TriangleData,
+                           OccupancyIndex,
+                           NormalIndex,
+                           ColourIndex,
+                           TexCache);
+        TraceOK(<span class="Constant">&quot;Triangle index complete&quot;</span>);
+
+
+        <span class="StorageClass">const</span> morton_map* <span class="StorageClass">const</span> NormalsPtr = &amp;NormalIndex;
+        <span class="StorageClass">const</span> morton_map* <span class="StorageClass">const</span> ColoursPtr = &amp;ColourIndex;
+        <span class="StorageClass">const</span> std::set&lt;morton_key&gt;* <span class="StorageClass">const</span> OccupancyIndexPtr = &amp;OccupancyIndex;
+
+        shape_sampler ShapeS = shape_sampler{ &amp;OccupancyIndexPtr, IntersectorFunction };
+        data_sampler NormalS = data_sampler{ &amp;NormalsPtr, NormalSampler };
+        data_sampler ColourS = data_sampler{ &amp;ColoursPtr, ColourSampler };
+
+        svo* Svo = CreateScene(ScaleExponent,
+                               MaxDepth,
+                               &amp;ShapeS,
+                               &amp;NormalS,
+                               &amp;ColourS);
+
+        NormalIndex.clear();
+        ColourIndex.clear();
+        free(TriangleData);
+        cgltf_free(Data);
+
+        DeleteImageCache(TexCache);
+        <span class="Statement">return</span> Svo;
+    }
+    <span class="Conditional">else</span>
+    {
+        LogError(<span class="Constant">&quot;Failed to load mesh data file&quot;</span>);
+
+        <span class="Conditional">if</span> (Data) cgltf_free(Data);
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+}
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

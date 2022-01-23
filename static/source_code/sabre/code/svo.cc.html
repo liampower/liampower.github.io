@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/svo.cc.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="cpp">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Todo { color: #cf6b4c; }
+.Constant { color: #cf6b4c; }
+.Special { color: #ba9875; }
+.Conditional { color: #ffcc33; }
+.Statement { color: #ffcc33; }
+.PreProc { color: #ba9875; }
+.Operator { color: #ba9875; }
+.Comment { color: #707070; }
+.StorageClass { color: #ffcc33; }
+.Type { color: #ffcc33; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#include </span><span class="Constant">&lt;assert.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;stdlib.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;stdio.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;x86intrin.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;vector&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;map&gt;</span>
+
+<span class="PreProc">#include </span><span class="Constant">&quot;sabre.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;svo.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;vecmath.hh&quot;</span>
+
+<span class="Statement">using</span> <span class="Structure">namespace</span> vm;
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u16 CHILD_PTR_MSK = <span class="Constant">0x7FFFU</span>;
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u32 FAR_BIT_MSK   = <span class="Constant">0x8000U</span>;
+
+<span class="Structure">enum</span> svo_oct
+{
+    OCT_C000 = <span class="Constant">0</span>,
+    OCT_C001 = <span class="Constant">1</span>,
+    OCT_C010 = <span class="Constant">2</span>,
+    OCT_C011 = <span class="Constant">3</span>,
+    OCT_C100 = <span class="Constant">4</span>,
+    OCT_C101 = <span class="Constant">5</span>,
+    OCT_C110 = <span class="Constant">6</span>,
+    OCT_C111 = <span class="Constant">7</span>
+};
+
+<span class="Structure">enum</span> voxel_type
+{
+    VOXEL_PARENT,
+    VOXEL_LEAF
+};
+
+<span class="Structure">struct</span> node_ref
+{
+    svo_block* Blk;
+    svo_node*  Node;
+};
+
+<span class="Structure">struct</span> frustum3
+{
+    vec3 Planes[<span class="Constant">6</span>];
+};
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u32
+CountSetBits(u32 Msk)
+{
+<span class="PreProc">#if defined(_MSC_VER)</span>
+    <span class="Statement">return</span> (u32)(__popcnt(Msk));
+<span class="PreProc">#else</span>
+    <span class="Statement">return</span> (u32)(__builtin_popcount(Msk));
+<span class="PreProc">#endif</span>
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> packed_snorm3
+PackVec3ToSnorm3(vec3 V)
+{
+    f32 Exp = <span class="Constant">127.0f</span>;
+
+    i8 Sx = (i8)Round(Clamp(V.X, -<span class="Constant">1.0f</span>, <span class="Constant">1.0f</span>) * Exp);
+    i8 Sy = (i8)Round(Clamp(V.Y, -<span class="Constant">1.0f</span>, <span class="Constant">1.0f</span>) * Exp);
+    i8 Sz = (i8)Round(Clamp(V.Z, -<span class="Constant">1.0f</span>, <span class="Constant">1.0f</span>) * Exp);
+
+    packed_snorm3 Out = <span class="Constant">0x00000000U</span>;
+    Out |= (u32)((u8)(Sz) &lt;&lt; <span class="Constant">16U</span>);
+    Out |= (u32)((u8)(Sy) &lt;&lt;  <span class="Constant">8U</span>);
+    Out |= (u32)((u8)(Sx));
+
+    <span class="Statement">return</span> Out;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u32
+FindHighestSetBit(u32 Msk)
+{
+<span class="PreProc">#if defined(_MSC_VER)</span>
+    <span class="Type">unsigned</span> <span class="Type">long</span> MSB;
+    _BitScanReverse(&amp;MSB, Msk);
+
+    <span class="Statement">return</span> (u32)MSB;
+<span class="PreProc">#else</span>
+    <span class="Statement">return</span> __builtin_ctz(Msk);
+<span class="PreProc">#endif</span>
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> uvec3
+FindHighestSetBit(uvec3 Msk)
+{
+    uvec3 Out;
+    Out.X = FindHighestSetBit(Msk.X);
+    Out.Y = FindHighestSetBit(Msk.Y);
+    Out.Z = FindHighestSetBit(Msk.Z);
+
+    <span class="Statement">return</span> Out;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u32
+GetTreeMaxScaleBiased(<span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Tree)
+{
+    <span class="Statement">return</span> (<span class="Constant">1U</span> &lt;&lt; Tree-&gt;ScaleExponent) &lt;&lt; Tree-&gt;Bias.Scale;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u32
+GetTreeMinScaleBiased(<span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Tree)
+{
+    <span class="Statement">return</span> (Tree-&gt;MaxDepth &gt; Tree-&gt;ScaleExponent) ?
+            <span class="Constant">1U</span> :
+            <span class="Constant">1U</span> &lt;&lt; (Tree-&gt;ScaleExponent - Tree-&gt;MaxDepth);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">bool</span>
+PointInCube(vec3 P, vec3 Min, vec3 Max)
+{
+    <span class="Statement">return</span> All(GreaterThanEqual(P, Min) &amp;&amp; LessThanEqual(P, Max));
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u32
+FindLowestSetBit(u32 Msk)
+{
+<span class="PreProc">#if defined(_MSC_VER)</span>
+    <span class="Type">unsigned</span> <span class="Type">long</span> LSB;
+    _BitScanForward(&amp;LSB, Msk);
+
+    <span class="Statement">return</span> (u32)LSB;
+<span class="PreProc">#else</span>
+    <span class="Statement">return</span> __builtin_clz(Msk);
+<span class="PreProc">#endif</span>
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">bool</span>
+HasFarChildren(svo_node* Node)
+{
+    <span class="Statement">return</span> (Node-&gt;ChildPtr &amp; FAR_BIT_MSK) != <span class="Constant">0</span>;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> far_ptr*
+PushFarPtr(far_ptr FarPtr, svo_block* Blk)
+{
+    Blk-&gt;FarPtrs[Blk-&gt;NextFarPtrSlot] = FarPtr;
+    far_ptr* AllocatedFarPtr = &amp;Blk-&gt;FarPtrs[Blk-&gt;NextFarPtrSlot];
+    ++Blk-&gt;NextFarPtrSlot;
+
+    <span class="Statement">return</span> AllocatedFarPtr;
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> node_ref
+GetTreeRootNodeRef(<span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Tree)
+{
+    <span class="Statement">return</span> node_ref{ Tree-&gt;RootBlock, &amp;Tree-&gt;RootBlock-&gt;Entries[<span class="Constant">0</span>] };
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> far_ptr*
+GetFarPointer(svo_node* Node, svo_block* Blk)
+{
+    <span class="Conditional">if</span> (HasFarChildren(Node))
+    {
+        u16 FarPtrIndex = Node-&gt;ChildPtr &amp; CHILD_PTR_MSK;
+
+        <span class="Statement">return</span> &amp;Blk-&gt;FarPtrs[FarPtrIndex];
+    }
+    <span class="Conditional">else</span>
+    {
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u32
+GetChildCount(svo_node* Parent)
+{
+    <span class="Statement">return</span> CountSetBits(Parent-&gt;OccupiedMask &amp; (~Parent-&gt;LeafMask));
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">int</span>
+GetFreeSlotCount(svo_block* <span class="StorageClass">const</span> Blk)
+{
+    <span class="Statement">return</span> (<span class="Type">int</span>)SBR_NODES_PER_BLK - (<span class="Type">int</span>)Blk-&gt;NextFreeSlot;
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">bool</span>
+IsOctantOccupied(svo_node* ContainingNode, svo_oct Oct)
+{
+    <span class="Statement">return</span> ContainingNode-&gt;OccupiedMask &amp; (<span class="Constant">1U</span> &lt;&lt; Oct);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">bool</span>
+IsOctantLeaf(svo_node* ContainingNode, svo_oct Oct)
+{
+    <span class="Statement">return</span> ContainingNode-&gt;LeafMask &amp; (<span class="Constant">1U</span> &lt;&lt; Oct);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+SetOctantOccupied(svo_oct SubOctant, voxel_type Type, svo_node* OutEntry)
+{
+    u32 OctMsk = <span class="Constant">1U</span> &lt;&lt; SubOctant;
+
+    OutEntry-&gt;OccupiedMask |= OctMsk;
+
+    <span class="Conditional">if</span> (VOXEL_LEAF == Type)
+    {
+       OutEntry-&gt;LeafMask |= OctMsk;
+    }
+    <span class="Conditional">else</span>
+    {
+       OutEntry-&gt;LeafMask &amp;= ~OctMsk;
+    }
+}
+
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> svo_bias
+ComputeScaleBias(u32 MaxDepth, u32 ScaleExponent)
+{
+    <span class="Conditional">if</span> (MaxDepth &gt; ScaleExponent)
+    {
+        u32 Bias = (MaxDepth - ScaleExponent);
+        f32 InvBias = <span class="Constant">1.0f</span> / (<span class="Statement">static_cast</span>&lt;f32&gt;(<span class="Constant">1U</span> &lt;&lt; Bias));
+
+        <span class="Statement">return</span> svo_bias{ InvBias, Bias };
+    }
+    <span class="Conditional">else</span>
+    {
+        <span class="Statement">return</span> svo_bias{ <span class="Constant">1.0f</span>, <span class="Constant">0</span> };
+    }
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> svo_node*
+PushNode(svo_block* Blk, svo_node Node)
+{
+    <span class="Conditional">if</span> (GetFreeSlotCount(Blk) &gt; <span class="Constant">0</span>)
+    {
+        svo_node* NewNode = &amp;Blk-&gt;Entries[Blk-&gt;NextFreeSlot];
+        *NewNode = Node;
+        ++Blk-&gt;NextFreeSlot;
+
+        <span class="Statement">return</span> NewNode;
+    }
+    <span class="Conditional">else</span>
+    {
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u32
+GetNodeChildOffset(svo_node* Parent, svo_oct ChildOct)
+{
+    u32 NonLeafChildren = Parent-&gt;OccupiedMask &amp; (~Parent-&gt;LeafMask);
+    u32 SetBitsBehindOctIdx = (<span class="Constant">1U</span> &lt;&lt; (u32)ChildOct) - <span class="Constant">1</span>;
+    u32 ChildOffset = CountSetBits(NonLeafChildren &amp; SetBitsBehindOctIdx);
+
+    <span class="Statement">return</span> ChildOffset;
+}
+
+
+<span class="StorageClass">static</span> node_ref
+GetNodeChild(node_ref ParentRef, svo_oct ChildOct)
+{
+    <span class="Comment">// Offset value from 0 - 7 of the particular child we are</span>
+    <span class="Comment">// interested in from the first child.</span>
+    u32 ChildOffset = GetNodeChildOffset(ParentRef.Node, ChildOct);
+
+    <span class="Comment">// How many blocks (forwards or backwards) we need to go</span>
+    <span class="Comment">// from the parent block to reach the block containing the</span>
+    <span class="Comment">// child.</span>
+    i32 BlksToJump = <span class="Constant">0</span>;
+
+    u32 FirstChildIndex = <span class="Constant">0</span>;
+
+    <span class="Conditional">if</span> (HasFarChildren(ParentRef.Node))
+    {
+        u32 FarPtrIndex = ParentRef.Node-&gt;ChildPtr &amp; CHILD_PTR_MSK;
+        far_ptr* FarPtr = &amp;ParentRef.Blk-&gt;FarPtrs[FarPtrIndex];
+        FirstChildIndex = FarPtr-&gt;NodeOffset;
+
+        i32 BlksFromParent = (i32)FarPtr-&gt;BlkIndex - (i32)ParentRef.Blk-&gt;Index;
+        i32 BlksFromFirst = (i32)((FirstChildIndex + ChildOffset) / SBR_NODES_PER_BLK);
+
+        BlksToJump = BlksFromParent + BlksFromFirst;
+    }
+    <span class="Conditional">else</span>
+    {
+        FirstChildIndex = ParentRef.Node-&gt;ChildPtr &amp; CHILD_PTR_MSK;
+        i32 BlksFromFirst = (i32)((FirstChildIndex + ChildOffset) / SBR_NODES_PER_BLK);
+
+        BlksToJump = BlksFromFirst;
+    }
+
+    svo_block* ChildBlk = ParentRef.Blk;
+    i32 BlksJumped = <span class="Constant">0</span>;
+    <span class="Statement">while</span> (BlksJumped != BlksToJump)
+    {
+        <span class="Conditional">if</span> (BlksToJump &lt; <span class="Constant">0</span>)
+        {
+            ChildBlk = ChildBlk-&gt;Prev;
+            --BlksJumped;
+        }
+        <span class="Conditional">else</span>
+        {
+            ChildBlk = ChildBlk-&gt;Next;
+            ++BlksJumped;
+        }
+    }
+
+    u32 ChildIndex = (FirstChildIndex + ChildOffset) % SBR_NODES_PER_BLK;
+
+    <span class="Statement">return</span> node_ref{ ChildBlk, &amp;ChildBlk-&gt;Entries[ChildIndex] };
+}
+
+
+<span class="StorageClass">static</span> far_ptr*
+AllocateFarPtr(svo_block* <span class="StorageClass">const</span> ContainingBlk)
+{
+    usize NextFarPtrSlot = ContainingBlk-&gt;NextFarPtrSlot;
+    assert(NextFarPtrSlot &lt; SBR_FAR_PTRS_PER_BLK);
+    far_ptr* Ptr = &amp;ContainingBlk-&gt;FarPtrs[NextFarPtrSlot];
+    ++ContainingBlk-&gt;NextFarPtrSlot;
+
+    assert(Ptr-&gt;NodeOffset == <span class="Constant">0</span>);
+    assert(Ptr-&gt;BlkIndex == <span class="Constant">0</span>);
+
+    <span class="Statement">return</span> Ptr;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+LinkParentAndChildNodes(node_ref ParentRef, node_ref ChildRef)
+{
+    <span class="Comment">// Compute the child offset from the start of the block</span>
+    u16 ChildOffset = <span class="Statement">static_cast</span>&lt;u16&gt;(ChildRef.Node - ChildRef.Blk-&gt;Entries);
+
+    <span class="Comment">// Extract first 15 bits</span>
+    u16 ChildPtrBits = ChildOffset &amp; CHILD_PTR_MSK;
+
+    <span class="Comment">// If the child node is in the same block as the parent node, all we need to do</span>
+    <span class="Comment">// is set the parent's child ptr to the child offset from the beginning of</span>
+    <span class="Comment">// their shared block.</span>
+    <span class="Conditional">if</span> (ChildRef.Blk == ParentRef.Blk)
+    {
+        ParentRef.Node-&gt;ChildPtr = ChildPtrBits;
+    }
+    <span class="Conditional">else</span>
+    {
+        <span class="Comment">// Allocate a new far pointer in the parent</span>
+        <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Error handling</span>
+        far_ptr* FarPtr = AllocateFarPtr(ParentRef.Blk);
+        assert(<span class="Constant">nullptr</span> != FarPtr);
+        FarPtr-&gt;BlkIndex = (u32)ChildRef.Blk-&gt;Index;
+        FarPtr-&gt;NodeOffset = ChildPtrBits;
+
+        <span class="Comment">// Set the child ptr value to the far bit with the remaining 15 bits</span>
+        <span class="Comment">// set as the index into the far ptrs storage block.</span>
+        ParentRef.Node-&gt;ChildPtr = FAR_BIT_MSK | u16(ParentRef.Blk-&gt;NextFarPtrSlot - <span class="Constant">1</span>);
+    }
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+GetOctantCentre(svo_oct Octant, u32 Scale, vec3 ParentCentreP)
+{
+    assert(Scale &gt; <span class="Constant">0</span>);
+    u32 Oct = (u32) Octant;
+
+    f32 Rad = (f32)(Scale &gt;&gt; <span class="Constant">1U</span>);
+    f32 X = (Oct &amp; <span class="Constant">1U</span>) ? <span class="Constant">1.0f</span> : -<span class="Constant">1.0f</span>;
+    f32 Y = (Oct &amp; <span class="Constant">2U</span>) ? <span class="Constant">1.0f</span> : -<span class="Constant">1.0f</span>;
+    f32 Z = (Oct &amp; <span class="Constant">4U</span>) ? <span class="Constant">1.0f</span> : -<span class="Constant">1.0f</span>;
+
+    <span class="Statement">return</span> ParentCentreP + (vec3(X, Y, Z) * Rad);
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> svo_oct
+GetOctantForPosition(vec3 P, vec3 ParentCentreP)
+{
+    uvec3 G = <span class="Statement">static_cast</span>&lt;uvec3&gt;(GreaterThan(P, ParentCentreP));
+
+    <span class="Statement">return</span> (svo_oct) (G.X + G.Y*<span class="Constant">2</span> + G.Z*<span class="Constant">4</span>);
+}
+
+
+<span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Do we *really* need the dependency on `svo` here?</span>
+<span class="Comment">// Seems like we could just remove UsedBlockCount altogether and</span>
+<span class="Comment">// rely on relative positioning for blocks.</span>
+<span class="StorageClass">static</span> svo_block*
+AllocateAndLinkNewBlock(svo_block* <span class="StorageClass">const</span> OldBlk, svo* <span class="StorageClass">const</span> Tree)
+{
+    <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Handle failure case</span>
+    svo_block* NewBlk = (svo_block*)calloc(<span class="Constant">1</span>, <span class="Operator">sizeof</span>(svo_block));
+    assert(NewBlk);
+    assert(OldBlk-&gt;Next == <span class="Constant">nullptr</span>);
+
+    NewBlk-&gt;Prev = OldBlk;
+    OldBlk-&gt;Next = NewBlk;
+
+    NewBlk-&gt;Index = OldBlk-&gt;Index + <span class="Constant">1</span>;
+
+    ++Tree-&gt;UsedBlockCount;
+    Tree-&gt;LastBlock = NewBlk;
+
+    <span class="Statement">return</span> NewBlk;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> node_ref
+AllocateNewNode(svo_block* <span class="StorageClass">const</span> ParentBlk, svo* <span class="StorageClass">const</span> Tree)
+{
+    <span class="Comment">// Check if there is room in the parent block;</span>
+    <span class="Comment">// If there isn't any, we need to allocate a new</span>
+    <span class="Comment">// block. Otherwise, we can just return the parent</span>
+    <span class="Comment">// block we were passed as the new parent.</span>
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == GetFreeSlotCount(ParentBlk))
+    {
+        svo_block* NewBlk = AllocateAndLinkNewBlock(Tree-&gt;LastBlock, Tree);
+        svo_node* NewNode = &amp;NewBlk-&gt;Entries[NewBlk-&gt;NextFreeSlot];
+        ++NewBlk-&gt;NextFreeSlot;
+
+        <span class="Statement">return</span> node_ref{ NewBlk, NewNode };
+    }
+    <span class="Conditional">else</span>
+    {
+        svo_node* NewNode = &amp;ParentBlk-&gt;Entries[ParentBlk-&gt;NextFreeSlot];
+        ++ParentBlk-&gt;NextFreeSlot;
+
+        <span class="Statement">return</span> node_ref{ ParentBlk, NewNode };
+    }
+}
+
+<span class="StorageClass">static</span> svo_node*
+AllocateNode(svo_block* <span class="StorageClass">const</span> Blk)
+{
+    <span class="Conditional">if</span> (GetFreeSlotCount(Blk) &gt; <span class="Constant">0</span>)
+    {
+        svo_node* Child = &amp;Blk-&gt;Entries[Blk-&gt;NextFreeSlot];
+        ++Blk-&gt;NextFreeSlot;
+
+        <span class="Statement">return</span> Child;
+    }
+    <span class="Conditional">else</span>
+    {
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+}
+
+<span class="StorageClass">static</span> <span class="Type">void</span>
+BuildSubOctreeRecursive(svo_node* Parent,
+        svo* Tree,
+        svo_oct RootOct,
+        u32 Depth,
+        u32 Scale,
+        svo_block* ParentBlk,
+        vec3 Centre,
+        shape_sampler* ShapeSampler,
+        data_sampler* NormalSampler,
+        data_sampler* ColourSampler)
+{
+    <span class="Structure">struct</span> node_child
+    {
+        svo_oct Oct;
+        vec3    Centre;
+        svo_node* Node;
+        svo_block* Blk;
+    };
+
+    u32 NextScale = Scale &gt;&gt; <span class="Constant">1U</span>;
+    u32 NextDepth = Depth + <span class="Constant">1</span>;
+
+    node_child Children[<span class="Constant">8</span>];
+    u32 LastChildIndex = <span class="Constant">0</span>;
+
+    uvec3 Radius = uvec3(Scale &gt;&gt; <span class="Constant">1U</span>);
+
+    <span class="StorageClass">const</span> node_ref ParentRef{ ParentBlk, Parent };
+
+    <span class="Statement">for</span> (u32 Oct = <span class="Constant">0</span>; Oct &lt; <span class="Constant">8</span>; ++Oct)
+    {
+        <span class="Comment">// Multiplying by the InvBias here transforms the octant cubes back </span>
+        <span class="Comment">// into &quot;real&quot; space from the scaled space we operate in when</span>
+        <span class="Comment">// constructing the tree.</span>
+        vec3 OctCentre = GetOctantCentre((svo_oct)Oct, Scale, Centre);
+        vec3 OctMin = (OctCentre - vec3(Radius)) * Tree-&gt;Bias.InvScale;
+        vec3 OctMax = (OctCentre + vec3(Radius)) * Tree-&gt;Bias.InvScale;
+
+        <span class="Type">bool</span> Intersected = ShapeSampler-&gt;SamplerFn(OctMin, OctMax, Tree, ShapeSampler-&gt;UserData);
+        <span class="Conditional">if</span> (Intersected)
+        {
+            <span class="Comment">// Check if the NEXT depth is less than the tree max</span>
+            <span class="Comment">// depth.</span>
+            <span class="Conditional">if</span> ((Depth + <span class="Constant">1</span>) &lt; Tree-&gt;MaxDepth)
+            {
+                <span class="Comment">// Need to subdivide</span>
+                SetOctantOccupied((svo_oct)Oct, VOXEL_PARENT, Parent);
+
+                <span class="Comment">// Allocate a new child node for this octant.</span>
+                <span class="Comment">// First, attempt to allocate within the same block</span>
+                <span class="StorageClass">const</span> node_ref ChildRef = AllocateNewNode(Tree-&gt;LastBlock, Tree);
+
+                <span class="Comment">// If the parent's child pointer has already been set, we do not</span>
+                <span class="Comment">// need to set it again. Child pointers should only point to the</span>
+                <span class="Comment">// first child.</span>
+                <span class="Conditional">if</span> (<span class="Constant">0x0000</span> == Parent-&gt;ChildPtr)
+                {
+                    LinkParentAndChildNodes(ParentRef, ChildRef);
+                }
+
+                assert(<span class="Constant">nullptr</span> != ChildRef.Node);
+                assert(<span class="Constant">nullptr</span> != ChildRef.Blk);
+
+                Children[LastChildIndex] = { (svo_oct)Oct, OctCentre, ChildRef.Node, ChildRef.Blk };
+                ++LastChildIndex;
+            }
+            <span class="Conditional">else</span>
+            {
+                SetOctantOccupied((svo_oct)Oct, VOXEL_LEAF, Parent);
+
+                vec3 Normal = NormalSampler-&gt;SamplerFn(OctCentre, Tree, NormalSampler-&gt;UserData);
+                vec3 Colour = ColourSampler-&gt;SamplerFn(OctCentre, Tree, ColourSampler-&gt;UserData);
+
+                Tree-&gt;AttribData.emplace_back(HashVec3(uvec3(OctCentre)), PackVec3ToSnorm3(Normal),  PackVec3ToSnorm3(Colour));
+            }
+        }
+    }
+
+    <span class="Statement">for</span> (u32 ChildIndex = <span class="Constant">0</span>; ChildIndex &lt; LastChildIndex; ++ChildIndex)
+    {
+        node_child Child = Children[ChildIndex];
+
+        BuildSubOctreeRecursive(Child.Node,
+                                Tree,
+                                Child.Oct,
+                                NextDepth,
+                                NextScale,
+                                Child.Blk,
+                                Child.Centre,
+                                ShapeSampler,
+                                NormalSampler,
+                                ColourSampler);
+    }
+}
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> svo*
+CreateScene(u32 ScaleExp,
+            u32 MaxDepth,
+            shape_sampler* ShapeSampler,
+            data_sampler* NormalSampler,
+            data_sampler* ColourSampler)
+
+{
+    svo* Tree = (svo*)calloc(<span class="Constant">1</span>, <span class="Operator">sizeof</span>(svo));
+
+    <span class="Conditional">if</span> (Tree)
+    {
+        LogInfo(<span class="Constant">&quot;Begin scene build&quot;</span>);
+        Tree-&gt;ScaleExponent = ScaleExp;
+        Tree-&gt;MaxDepth = MaxDepth;
+
+        <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Check failure</span>
+        <span class="Comment">// No need to initialise indices, nodes, etc. to zero</span>
+        <span class="Comment">// here because blocks are designed to be fully initialised</span>
+        <span class="Comment">// and working with zeroed elements.</span>
+        svo_block* RootBlk = (svo_block*)calloc(<span class="Constant">1</span>, <span class="Operator">sizeof</span>(svo_block));
+        assert(RootBlk);
+        Tree-&gt;RootBlock = RootBlk;
+        Tree-&gt;LastBlock = RootBlk;
+        Tree-&gt;UsedBlockCount = <span class="Constant">1</span>;
+
+        <span class="Comment">// Allocate the root node</span>
+        svo_node* RootNode = &amp;RootBlk-&gt;Entries[RootBlk-&gt;NextFreeSlot];
+        ++RootBlk-&gt;NextFreeSlot;
+
+        <span class="Comment">// Begin building tree</span>
+        u32 RootScale = (<span class="Constant">1U</span> &lt;&lt; ScaleExp);
+
+        Tree-&gt;Bias = ComputeScaleBias(MaxDepth, ScaleExp);
+        Tree-&gt;AttribData = std::vector&lt;attrib_data&gt;();
+
+        <span class="Comment">// Scale up by the bias</span>
+        RootScale &lt;&lt;= Tree-&gt;Bias.Scale;
+        vec3 RootCentre = vec3(RootScale &gt;&gt; <span class="Constant">1U</span>);
+
+        LogInfo(<span class="Constant">&quot;Scene.RootScale: </span><span class="Special">%u</span><span class="Constant">&quot;</span>, RootScale);
+        LogInfo(<span class="Constant">&quot;Scene.Depth: </span><span class="Special">%u</span><span class="Constant">&quot;</span>, MaxDepth);
+        LogInfo(<span class="Constant">&quot;Scene.RootCentre: (</span><span class="Special">%f</span><span class="Constant">, </span><span class="Special">%f</span><span class="Constant">, </span><span class="Special">%f</span><span class="Constant">)&quot;</span>,
+                (f64)RootCentre.X,
+                (f64)RootCentre.Y,
+                (f64)RootCentre.Z);
+
+        <span class="Comment">// Initiate the recursive construction process</span>
+        <span class="Comment">// The root depth is initialised to 1 because we are</span>
+        <span class="Comment">// technically beginning at the *second* tree level</span>
+        <span class="Comment">// when constructing the tree. The first level exists</span>
+        <span class="Comment">// implicitly in the allocated root node, the root</span>
+        <span class="Comment">// &quot;parent&quot;.</span>
+        BuildSubOctreeRecursive(RootNode,
+                                Tree,
+                                OCT_C000,
+                                <span class="Constant">1</span>,
+                                RootScale &gt;&gt; <span class="Constant">1</span>,
+                                RootBlk,
+                                RootCentre,
+                                ShapeSampler,
+                                NormalSampler,
+                                ColourSampler);
+        LogInfo(<span class="Constant">&quot;Attribs: </span><span class="Special">%d</span><span class="Constant">&quot;</span>, Tree-&gt;AttribData.size());
+
+        TraceOK(<span class="Constant">&quot;Scene build complete&quot;</span>);
+        <span class="Statement">return</span> Tree;
+    }
+    <span class="Conditional">else</span>
+    {
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> node_ref
+ReAllocateNode(node_ref NodeRef, svo* <span class="StorageClass">const</span> Tree)
+{
+    node_ref Result = { };
+    <span class="Comment">// The block that the reallocated node will reside in.</span>
+    svo_block* NewBlk = Tree-&gt;LastBlock;
+
+    <span class="Comment">// Attempt to allocate in the same block</span>
+    svo_node* NewNode = PushNode(NewBlk, *NodeRef.Node);
+
+    <span class="Conditional">if</span> (<span class="Constant">nullptr</span> == NewNode)
+    {
+        NewBlk = AllocateAndLinkNewBlock(NewBlk, Tree);
+        NewNode = PushNode(NewBlk, *NodeRef.Node);
+    }
+
+    <span class="Comment">// If this node has any local pointers, and we moved to a new block, we need</span>
+    <span class="Comment">// to change those local pointers into far pointers.</span>
+    <span class="Conditional">if</span> (NewBlk != NodeRef.Blk)
+    {
+        <span class="Comment">// Moved to a new blk and our child pointer is a far pointer.</span>
+        <span class="Comment">// Need to copy this far pointer into the new child block.</span>
+        <span class="Conditional">if</span> (HasFarChildren(NodeRef.Node))
+        {
+            <span class="Comment">// Get this node's far ptr</span>
+            far_ptr* FarPtr = GetFarPointer(NodeRef.Node, NodeRef.Blk);
+
+            <span class="Comment">// Copy the far ptr into the new block</span>
+            PushFarPtr(*FarPtr, NewBlk);
+
+            <span class="Comment">// Set the node's far pointer index to the new far pointer.</span>
+            NewNode-&gt;ChildPtr = FAR_BIT_MSK | u16(NewBlk-&gt;NextFarPtrSlot - <span class="Constant">1</span>);
+        }
+        <span class="Conditional">else</span>
+        {
+            <span class="Comment">// Need to convert local pointer into far pointer.</span>
+            u16 OldChildPtr = NodeRef.Node-&gt;ChildPtr;
+            far_ptr* NewFarPtr = AllocateFarPtr(NewBlk);
+
+            NewFarPtr-&gt;BlkIndex = NodeRef.Blk-&gt;Index;
+            NewFarPtr-&gt;NodeOffset = OldChildPtr;
+            NewNode-&gt;ChildPtr = FAR_BIT_MSK | u16(NewBlk-&gt;NextFarPtrSlot - <span class="Constant">1</span>);
+        }
+    }
+
+    Result.Node = NewNode;
+    Result.Blk = NewBlk;
+
+    <span class="Statement">return</span> Result;
+}
+
+
+<span class="StorageClass">static</span> node_ref
+InsertChild(node_ref ParentRef, svo_oct ChildOct, svo* Tree, voxel_type Type)
+{
+    svo_node PCopy = *ParentRef.Node;
+    SetOctantOccupied(ChildOct, Type, &amp;PCopy);
+
+    <span class="Comment">// Gather siblings of the newborn child</span>
+    u32 NonLeafChildMsk = PCopy.OccupiedMask &amp; (~PCopy.LeafMask);
+    u32 ChildCount = CountSetBits(NonLeafChildMsk);
+
+    node_ref FirstChildRef = { <span class="Constant">nullptr</span>, <span class="Constant">nullptr</span> };
+    node_ref CreatedNode = { <span class="Constant">nullptr</span>, <span class="Constant">nullptr</span> };
+
+    <span class="Type">bool</span> HaveCreatedChild = <span class="Constant">false</span>;
+
+    <span class="Comment">// Process each child (max 8) of the parent node, including the one</span>
+    <span class="Comment">// we just inserted.</span>
+    <span class="Statement">for</span> (u32 ChildIndex = <span class="Constant">0</span>; ChildIndex &lt; ChildCount; ++ChildIndex)
+    {
+        <span class="Comment">// Octant of the child we are processing</span>
+        svo_oct Oct = (svo_oct)FindLowestSetBit(NonLeafChildMsk);
+
+        <span class="Comment">// If the current octant we're processing is the one we're inserting, </span>
+        <span class="Comment">// we need to allocate a child svo_node for this octant.</span>
+        <span class="Conditional">if</span> (ChildOct == Oct &amp;&amp; Type == VOXEL_PARENT)
+        {
+            node_ref NewChildRef = AllocateNewNode(Tree-&gt;LastBlock, Tree);
+
+            <span class="Conditional">if</span> (! HaveCreatedChild)
+            {
+                FirstChildRef = NewChildRef;
+            }
+
+            HaveCreatedChild = <span class="Constant">true</span>;
+            CreatedNode = NewChildRef;
+        }
+        <span class="Conditional">else</span>
+        {
+            node_ref ChildRef = GetNodeChild(ParentRef, Oct);
+            node_ref MovedChild = ReAllocateNode(ChildRef, Tree);
+
+            <span class="Conditional">if</span> (! HaveCreatedChild)
+            {
+                FirstChildRef = MovedChild;
+            }
+
+            HaveCreatedChild = <span class="Constant">true</span>;
+        }
+
+        <span class="Comment">// Clear the processed oct from the mask</span>
+        NonLeafChildMsk &amp;= ~(<span class="Constant">1U</span> &lt;&lt; Oct);
+    }
+
+    <span class="Conditional">if</span> (Type == VOXEL_PARENT) assert(FirstChildRef.Node);
+
+    *ParentRef.Node = PCopy;
+    <span class="Conditional">if</span> (HaveCreatedChild)
+    {
+        LinkParentAndChildNodes(ParentRef, FirstChildRef);
+    }
+
+    <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Returns nullptrs when Type == VOXEL_LEAF. Should we break this</span>
+    <span class="Comment">// into a separate function for inserting leaf voxels?</span>
+    <span class="Comment">//return CreatedNode;</span>
+    <span class="Conditional">if</span> (<span class="Constant">nullptr</span> != CreatedNode.Node)
+    {
+        <span class="Statement">return</span> CreatedNode;
+    }
+    <span class="Conditional">else</span>
+    {
+        <span class="Statement">return</span> ParentRef;
+    }
+
+}
+
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">void</span>
+InsertVoxel(svo* Tree, vec3 P)
+{
+    <span class="Comment">// Scale of the smallest voxel in the SVO. For biased</span>
+    <span class="Comment">// trees, this will always be 1. For non-biased trees,</span>
+    <span class="Comment">// this will be the scale at the tree's MaxDepth.</span>
+    u32 TreeMinScale = GetTreeMinScaleBiased(Tree);
+    u32 VoxelScale = TreeMinScale;
+
+    <span class="Comment">// Obtain the original root scale of the tree, though</span>
+    <span class="Comment">// this may need to be biased further if the inserted</span>
+    <span class="Comment">// voxel scale is smaller than the tree minimum scale.</span>
+    u32 RootScale = GetTreeMaxScaleBiased(Tree);
+
+    <span class="Comment">// Inserted voxel position, scaled by the tree bias.</span>
+    vec3 InsertP = P * <span class="Statement">static_cast</span>&lt;f32&gt;(<span class="Constant">1U</span> &lt;&lt; Tree-&gt;Bias.Scale);
+
+    <span class="StorageClass">const</span> vec3 TreeMax = vec3(RootScale);
+    <span class="StorageClass">const</span> vec3 TreeMin = vec3(<span class="Constant">0</span>);
+
+    <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Expand tree?</span>
+    <span class="Conditional">if</span> (<span class="Constant">false</span> == PointInCube(InsertP, TreeMin, TreeMax))
+    {
+        <span class="Statement">return</span>;
+    }
+
+    vec3 ParentCentreP = vec3(RootScale &gt;&gt; <span class="Constant">1</span>);
+    svo_oct CurrentOct = GetOctantForPosition(InsertP, ParentCentreP);
+
+    <span class="Type">bool</span> AllocatedParent = <span class="Constant">false</span>;
+    node_ref ParentRef = GetTreeRootNodeRef(Tree);
+
+    <span class="Comment">// Need to bias the voxel scale in case of upscaled</span>
+    <span class="Comment">// trees.</span>
+    u32 EditScale = (VoxelScale &lt;&lt; <span class="Constant">1</span>);
+
+    <span class="Comment">// Beginning at the root scale, descend the tree until we get</span>
+    <span class="Comment">// to the desired scale, or we hit a leaf octant (which means</span>
+    <span class="Comment">// we can't go any further).</span>
+    u32 CurrentScale = RootScale &gt;&gt; <span class="Constant">1</span>;
+
+    <span class="Statement">while</span> (CurrentScale &gt; EditScale)
+    {
+        <span class="Conditional">if</span> (IsOctantOccupied(ParentRef.Node, CurrentOct))
+        {
+            <span class="Conditional">if</span> (IsOctantLeaf(ParentRef.Node, CurrentOct))
+            {
+                <span class="Statement">return</span>;
+            }
+            <span class="Conditional">else</span>
+            {
+                ParentRef = GetNodeChild(ParentRef, CurrentOct);
+            }
+        }
+        <span class="Conditional">else</span>
+        {
+            <span class="Comment">// If the current octant isn't occupied, we will need to build a new subtree</span>
+            <span class="Comment">// containing our inserted voxel.</span>
+            ParentRef = InsertChild(ParentRef, CurrentOct, Tree, VOXEL_PARENT);
+            AllocatedParent = <span class="Constant">true</span>;
+        }
+
+        ParentCentreP = GetOctantCentre(CurrentOct, CurrentScale, ParentCentreP);
+        CurrentOct = GetOctantForPosition(InsertP, ParentCentreP);
+        CurrentScale &gt;&gt;= <span class="Constant">1</span>;
+    }
+
+    <span class="Conditional">if</span> (AllocatedParent)
+    {
+        SetOctantOccupied(CurrentOct, VOXEL_LEAF, ParentRef.Node);
+    }
+    <span class="Conditional">else</span>
+    {
+        InsertChild(ParentRef, CurrentOct, Tree, VOXEL_LEAF);
+    }
+}
+
+<span class="StorageClass">static</span> node_ref
+DeleteLeafChild(svo_oct ChildOct, svo* <span class="StorageClass">const</span> Tree, node_ref ParentRef)
+{
+    <span class="Comment">// Splits a former leaf node into 7 child leaves</span>
+    <span class="Comment">// and one non-leaf child.</span>
+
+    <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Gracefully handle case where the</span>
+    <span class="Comment">// parent is not a leaf.</span>
+    assert(IsOctantLeaf(ParentRef.Node, ChildOct));
+
+    node_ref NewChildRef = InsertChild(ParentRef, ChildOct, Tree, VOXEL_PARENT);
+
+    <span class="Comment">// Mask of all octants except the intended</span>
+    <span class="Comment">// child.</span>
+    u32 LeavesMsk = ~(<span class="Constant">1U</span> &lt;&lt; ChildOct);
+
+    <span class="Comment">// Clear this oct's bit from the parent leaf</span>
+    <span class="Comment">// mask. If this octant was a leaf, it will</span>
+    <span class="Comment">// already be occupied.</span>
+    ParentRef.Node-&gt;LeafMask &amp;= LeavesMsk;
+
+    <span class="Comment">// Set all octants occupied in the newly</span>
+    <span class="Comment">// allocated child.</span>
+    NewChildRef.Node-&gt;OccupiedMask = <span class="Constant">0xFF</span>;
+
+    <span class="Comment">// Set all octants inside the newly allocated</span>
+    <span class="Comment">// child to </span>
+    NewChildRef.Node-&gt;LeafMask = (u8)LeavesMsk;
+
+    <span class="Statement">return</span> NewChildRef;
+}
+
+<span class="Structure">struct</span> ray_intersection
+{
+    <span class="Type">float</span> tMin;
+    <span class="Type">float</span> tMax;
+    vec3 tMaxV;
+    vec3 tMinV;
+};
+
+<span class="StorageClass">static</span> ray_intersection
+ComputeRayBoxIntersection(vec3 ROrigin, vec3 RInvDir, vec3 vMin, vec3 vMax)
+{
+    vec3 t0 = (vMin - ROrigin) * RInvDir; <span class="Comment">// Distance along ray to vmin planes</span>
+    vec3 t1 = (vMax - ROrigin) * RInvDir; <span class="Comment">// Distance along ray to vmax planes</span>
+
+    vec3 tMin = Minimum(t0, t1); <span class="Comment">// Minimums of all distances</span>
+    vec3 tMax = Maximum(t0, t1); <span class="Comment">// Maximums of all distances</span>
+
+    <span class="Type">float</span> ttMin = HorzMax(tMin); <span class="Comment">// Largest of the min distances (closest to box)</span>
+    <span class="Type">float</span> ttMax = HorzMin(tMax); <span class="Comment">// Smallest of max distances (closest to box)</span>
+
+    ray_intersection Result = { ttMin, ttMax, tMax, tMin };
+    <span class="Statement">return</span> Result;
+}
+
+<span class="Structure">struct</span> st_frame
+{
+    node_ref Node;
+    uint Scale;
+    vec3 ParentCentre;
+};
+
+<span class="StorageClass">static</span> <span class="Type">bool</span>
+IsAdvanceValid(svo_oct NewOct, svo_oct OldOct, vec3 RaySgn)
+{
+    ivec3 NewOctBits = ivec3(uvec3{<span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">4</span>} &amp; <span class="Statement">static_cast</span>&lt;u32&gt;(NewOct));
+    ivec3 OldOctBits = ivec3(uvec3{<span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">4</span>} &amp; <span class="Statement">static_cast</span>&lt;u32&gt;(OldOct));
+
+    vec3 OctSgn = Sign(vec3(NewOctBits - OldOctBits));
+
+    <span class="Statement">return</span> Any(Equal(RaySgn, OctSgn));
+}
+
+<span class="StorageClass">static</span> svo_oct
+GetNextOctant(<span class="Type">float</span> tMax, vec3 tMaxV, svo_oct CurrentOct)
+{
+    uvec3 XorMsk3 = uvec3(GreaterThanEqual(vec3(tMax), tMaxV)) * uvec3(<span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">4</span>);
+
+    uint XorMsk = XorMsk3.X + XorMsk3.Y + XorMsk3.Z;
+
+    <span class="Statement">return</span> svo_oct(CurrentOct ^ XorMsk);
+}
+
+<span class="StorageClass">extern</span> vec3
+GetNearestFreeSlot(vec3 RayOrigin, vec3 RayDir, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Tree)
+{
+    u32 MaxScale = GetTreeMaxScaleBiased(Tree);
+
+    vec3 RaySgn = Sign(RayDir);
+    st_frame Stack[<span class="Constant">64</span> + <span class="Constant">1</span>];
+    uint Scale = MaxScale;
+    vec3 RayInvDir = Reciprocal(RayDir);
+    vec3 RootMin = vec3(<span class="Constant">0</span>);
+    vec3 RootMax = vec3(Scale) * Tree-&gt;Bias.InvScale;
+    <span class="StorageClass">const</span> <span class="Type">float</span> BiasScale = (<span class="Constant">1.0f</span> / Tree-&gt;Bias.InvScale);
+    vec3 LastCentre = vec3(<span class="Constant">0</span>);
+
+    ray_intersection CurrentIntersection = ComputeRayBoxIntersection(RayOrigin, RayInvDir, RootMin, RootMax);
+    <span class="Conditional">if</span> (CurrentIntersection.tMin &lt;= CurrentIntersection.tMax)    <span class="Comment">// Raycast to find voxel position</span>
+    {
+        vec3 RayP = (CurrentIntersection.tMin &gt;= <span class="Constant">0</span>) ? RayOrigin + (RayDir *CurrentIntersection.tMin) : RayOrigin;
+        vec3 ParentCentre = vec3(Scale &gt;&gt; <span class="Constant">1</span>);
+        svo_oct CurrentOct = GetOctantForPosition(RayP, ParentCentre*Tree-&gt;Bias.InvScale);
+        node_ref ParentNodeRef = GetTreeRootNodeRef(Tree);
+        uint CurrentDepth = <span class="Constant">1</span>;
+        Scale &gt;&gt;= <span class="Constant">1</span>;
+
+        Stack[CurrentDepth] = { ParentNodeRef, Scale, ParentCentre };
+
+        <span class="Statement">for</span> (<span class="Type">int</span> Step = <span class="Constant">0</span>; Step &lt; <span class="Constant">64</span>; ++Step)
+        {
+            vec3 Rad = vec3(Scale &gt;&gt; <span class="Constant">1</span>);
+            vec3 NodeCentre = GetOctantCentre(CurrentOct, Scale, ParentCentre);
+            vec3 NodeMin = (NodeCentre - Rad) * Tree-&gt;Bias.InvScale;
+            vec3 NodeMax = (NodeCentre + Rad) * Tree-&gt;Bias.InvScale;
+
+            CurrentIntersection = ComputeRayBoxIntersection(RayOrigin, RayInvDir, NodeMin, NodeMax);
+
+            <span class="Conditional">if</span> (CurrentIntersection.tMin &lt;= CurrentIntersection.tMax)
+            {
+                <span class="Conditional">if</span> (IsOctantOccupied(ParentNodeRef.Node, CurrentOct))
+                {
+                    <span class="Comment">// {{{ </span>
+                    <span class="Conditional">if</span> (IsOctantLeaf(ParentNodeRef.Node, CurrentOct))
+                    {
+                        <span class="Comment">// Leaf hit; return nodecentre.</span>
+                        <span class="Comment">// Return centre of the *previous* oct we visited</span>
+                        <span class="Comment">//return NodeCentre * Tree-&gt;Bias.InvScale;</span>
+                        <span class="Statement">return</span> LastCentre * Tree-&gt;Bias.InvScale;
+                    }
+                    <span class="Conditional">else</span>
+                    {
+                        Stack[CurrentDepth] = { ParentNodeRef, Scale, ParentCentre };
+
+                        ParentNodeRef = GetNodeChild(ParentNodeRef, CurrentOct);
+                        CurrentOct = GetOctantForPosition(RayP, NodeCentre*Tree-&gt;Bias.InvScale);
+                        ParentCentre = NodeCentre;
+                        Scale &gt;&gt;= <span class="Constant">1</span>;
+                        ++CurrentDepth;
+
+                        <span class="Statement">continue</span>;
+                    }
+                    <span class="Comment">// }}}</span>
+                }
+
+                RayP = RayOrigin + RayDir*(CurrentIntersection.tMax + <span class="Constant">0.015625f</span>);
+                <span class="StorageClass">const</span> svo_oct NextOct = GetNextOctant(CurrentIntersection.tMax, CurrentIntersection.tMaxV, CurrentOct);
+
+                <span class="Conditional">if</span> (IsAdvanceValid(NextOct, CurrentOct, RaySgn))
+                {
+                    CurrentOct = NextOct;
+                    LastCentre = NodeCentre;
+                }
+                <span class="Conditional">else</span>
+                {
+                    <span class="Comment">// {{{ </span>
+                    <span class="Comment">// Determined that NodeCentre is never &lt; 0</span>
+                    uvec3 NodeCentreBits = uvec3(NodeCentre);
+                    uvec3 RayPBits = uvec3(RayP * BiasScale);
+
+                    <span class="Comment">// NOTE(Liam): It is **okay** to have negative values here</span>
+                    <span class="Comment">// because the HDB will end up being equal to ScaleExponentUniform.</span>
+                    <span class="Comment">//</span>
+                    <span class="Comment">// Find the highest differing bit</span>
+                    uvec3 HDB = FindHighestSetBit(NodeCentreBits ^ RayPBits);
+                    bvec3 B = LessThan(HDB, uvec3(Tree-&gt;ScaleExponent + Tree-&gt;Bias.Scale));
+
+                    uint M = HorzMax(Select(HDB, uvec3(<span class="Constant">0</span>), B));
+
+                    uint NextDepth = ((Tree-&gt;ScaleExponent + Tree-&gt;Bias.Scale) - M);
+
+                    <span class="Conditional">if</span> (NextDepth &lt;= <span class="Constant">64</span> &amp;&amp; NextDepth &lt; CurrentDepth)
+                    {
+                        CurrentDepth = NextDepth;
+                        Scale = Stack[CurrentDepth].Scale;
+                        ParentCentre = Stack[CurrentDepth].ParentCentre;
+                        ParentNodeRef = Stack[CurrentDepth].Node;
+
+                        CurrentOct = GetOctantForPosition(RayP, ParentCentre*Tree-&gt;Bias.InvScale);
+                    }
+                    <span class="Conditional">else</span>
+                    {
+                        <span class="Statement">break</span>;
+                    }
+                    <span class="Comment">/// }}}</span>
+                }
+            }
+        }
+
+    }
+
+    printf(<span class="Constant">&quot;Position not found</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+
+    <span class="Statement">return</span> vec3(<span class="Constant">FLT_MAX</span>);
+}
+
+<span class="StorageClass">extern</span> vec3
+GetNearestLeafSlot(vec3 RayOrigin, vec3 RayDir, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Tree)
+{
+    u32 MaxScale = GetTreeMaxScaleBiased(Tree);
+
+    vec3 RaySgn = Sign(RayDir);
+    st_frame Stack[<span class="Constant">64</span> + <span class="Constant">1</span>];
+    uint Scale = MaxScale;
+    vec3 RayInvDir = Reciprocal(RayDir);
+    vec3 RootMin = vec3(<span class="Constant">0</span>);
+    vec3 RootMax = vec3(Scale) * Tree-&gt;Bias.InvScale;
+    <span class="StorageClass">const</span> <span class="Type">float</span> BiasScale = (<span class="Constant">1.0f</span> / Tree-&gt;Bias.InvScale);
+
+    ray_intersection CurrentIntersection = ComputeRayBoxIntersection(RayOrigin, RayInvDir, RootMin, RootMax);
+    <span class="Conditional">if</span> (CurrentIntersection.tMin &lt;= CurrentIntersection.tMax)    <span class="Comment">// Raycast to find voxel position</span>
+    {
+        vec3 RayP = (CurrentIntersection.tMin &gt;= <span class="Constant">0</span>) ? RayOrigin + (RayDir * CurrentIntersection.tMin) : RayOrigin;
+        vec3 ParentCentre = vec3(Scale &gt;&gt; <span class="Constant">1</span>);
+        svo_oct CurrentOct = GetOctantForPosition(RayP, ParentCentre*Tree-&gt;Bias.InvScale);
+        node_ref ParentNodeRef = GetTreeRootNodeRef(Tree);
+        uint CurrentDepth = <span class="Constant">1</span>;
+        Scale &gt;&gt;= <span class="Constant">1</span>;
+
+        Stack[CurrentDepth] = { ParentNodeRef, Scale, ParentCentre };
+
+        <span class="Statement">for</span> (<span class="Type">int</span> Step = <span class="Constant">0</span>; Step &lt; <span class="Constant">64</span>; ++Step)
+        {
+            vec3 Rad = vec3(Scale &gt;&gt; <span class="Constant">1</span>);
+            vec3 NodeCentre = GetOctantCentre(CurrentOct, Scale, ParentCentre);
+            vec3 NodeMin = (NodeCentre - Rad) * Tree-&gt;Bias.InvScale;
+            vec3 NodeMax = (NodeCentre + Rad) * Tree-&gt;Bias.InvScale;
+
+            CurrentIntersection = ComputeRayBoxIntersection(RayOrigin, RayInvDir, NodeMin, NodeMax);
+
+            <span class="Conditional">if</span> (CurrentIntersection.tMin &lt;= CurrentIntersection.tMax)
+            {
+                <span class="Conditional">if</span> (IsOctantOccupied(ParentNodeRef.Node, CurrentOct))
+                {
+                    <span class="Comment">// {{{ </span>
+                    <span class="Conditional">if</span> (IsOctantLeaf(ParentNodeRef.Node, CurrentOct))
+                    {
+                        <span class="Comment">// Leaf hit; return nodecentre.</span>
+                        <span class="Statement">return</span> NodeCentre * Tree-&gt;Bias.InvScale;
+                    }
+                    <span class="Conditional">else</span>
+                    {
+                        Stack[CurrentDepth] = { ParentNodeRef, Scale, ParentCentre };
+
+                        ParentNodeRef = GetNodeChild(ParentNodeRef, CurrentOct);
+                        CurrentOct = GetOctantForPosition(RayP, NodeCentre*Tree-&gt;Bias.InvScale);
+                        ParentCentre = NodeCentre;
+                        Scale &gt;&gt;= <span class="Constant">1</span>;
+                        ++CurrentDepth;
+
+                        <span class="Statement">continue</span>;
+                    }
+                    <span class="Comment">// }}}</span>
+                }
+
+                RayP = RayOrigin + RayDir*(CurrentIntersection.tMax + <span class="Constant">0.015625f</span>);
+                <span class="StorageClass">const</span> svo_oct NextOct = GetNextOctant(CurrentIntersection.tMax, CurrentIntersection.tMaxV, CurrentOct);
+
+                <span class="Conditional">if</span> (IsAdvanceValid(NextOct, CurrentOct, RaySgn))
+                {
+                    CurrentOct = NextOct;
+                }
+                <span class="Conditional">else</span>
+                {
+                    <span class="Comment">// {{{ </span>
+                    <span class="Comment">// Determined that NodeCentre is never &lt; 0</span>
+                    uvec3 NodeCentreBits = uvec3(NodeCentre);
+                    uvec3 RayPBits = uvec3(RayP * BiasScale);
+
+                    <span class="Comment">// NOTE(Liam): It is **okay** to have negative values here</span>
+                    <span class="Comment">// because the HDB will end up being equal to ScaleExponentUniform.</span>
+                    <span class="Comment">//</span>
+                    <span class="Comment">// Find the highest differing bit</span>
+                    uvec3 HDB = FindHighestSetBit(NodeCentreBits ^ RayPBits);
+                    bvec3 B = LessThan(HDB, uvec3(Tree-&gt;ScaleExponent + Tree-&gt;Bias.Scale));
+
+                    uint M = HorzMax(Select(HDB, uvec3(<span class="Constant">0</span>), B));
+
+                    uint NextDepth = ((Tree-&gt;ScaleExponent + Tree-&gt;Bias.Scale) - M);
+
+                    <span class="Conditional">if</span> (NextDepth &lt;= <span class="Constant">64</span> &amp;&amp; NextDepth &lt; CurrentDepth)
+                    {
+                        CurrentDepth = NextDepth;
+                        Scale = Stack[CurrentDepth].Scale;
+                        ParentCentre = Stack[CurrentDepth].ParentCentre;
+                        ParentNodeRef = Stack[CurrentDepth].Node;
+
+                        CurrentOct = GetOctantForPosition(RayP, ParentCentre*Tree-&gt;Bias.InvScale);
+                    }
+                    <span class="Conditional">else</span>
+                    {
+                        <span class="Statement">break</span>;
+                    }
+                    <span class="Comment">/// }}}</span>
+                }
+            }
+        }
+
+    }
+
+    LogInfo(<span class="Constant">&quot;Position not found&quot;</span>);
+
+    <span class="Statement">return</span> vec3(<span class="Constant">FLT_MAX</span>);
+}
+
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">void</span>
+DeleteVoxel(svo* Tree, vec3 VoxelP)
+{
+    <span class="Comment">// Scale the voxel position by the tree bias</span>
+    vec3 DeleteP = VoxelP * (<span class="Type">float</span>)((<span class="Constant">1U</span> &lt;&lt; Tree-&gt;Bias.Scale));
+
+    <span class="Comment">// Always go down to leaf scale (cheat at mem. mgmt!)</span>
+    u32 MaxScale = GetTreeMaxScaleBiased(Tree);
+    u32 MinScale = GetTreeMinScaleBiased(Tree);
+
+    vec3 ParentCentre = vec3(MaxScale &gt;&gt; <span class="Constant">1U</span>);
+    svo_oct CurrentOct = GetOctantForPosition(DeleteP, ParentCentre);
+
+    node_ref ParentNodeRef = GetTreeRootNodeRef(Tree);
+    <span class="Type">bool</span> CreatedChild = <span class="Constant">false</span>;
+
+    <span class="Comment">// For configurations where MaxDepth &gt; ScaleExponent, this will always</span>
+    <span class="Comment">// be 1.</span>
+    <span class="Comment">//</span>
+    <span class="Comment">// For configurations where MaxDepth &lt; ScaleExponent, this will always</span>
+    <span class="Comment">// be 1 &lt;&lt; (ScaleExponent - MaxDepth)</span>
+    u32 CurrentScale = MaxScale;
+    u32 LeafScale = MinScale &lt;&lt; <span class="Constant">1</span>;
+
+    <span class="Comment">// Descend the tree until we get to the minium scale.</span>
+    <span class="Statement">while</span> (CurrentScale &gt;= LeafScale)
+    {
+        CurrentScale &gt;&gt;= <span class="Constant">1</span>;
+        <span class="Comment">// If we had previously created a child node, we need to</span>
+        <span class="Comment">// continue building the tree until we reach the min scale.</span>
+        <span class="Conditional">if</span> (CreatedChild &amp;&amp; CurrentScale &gt; LeafScale)
+        {
+            node_ref NewParentRef = AllocateNewNode(Tree-&gt;LastBlock, Tree);
+
+            u32 OctMsk = ~(<span class="Constant">1U</span> &lt;&lt; CurrentOct);
+            NewParentRef.Node-&gt;OccupiedMask = <span class="Constant">0xFF</span>;   <span class="Comment">// All octants occupied</span>
+            NewParentRef.Node-&gt;LeafMask = (u8)OctMsk; <span class="Comment">// All octants except current leaves</span>
+
+            LinkParentAndChildNodes(ParentNodeRef, NewParentRef);
+
+            ParentNodeRef = NewParentRef;
+        }
+        <span class="Conditional">else</span> <span class="Conditional">if</span> (IsOctantOccupied(ParentNodeRef.Node, CurrentOct))
+        {
+            <span class="Conditional">if</span> (CurrentScale &lt;= LeafScale)
+            {
+                u32 ClearMsk = ~(<span class="Constant">1U</span> &lt;&lt; CurrentOct);
+                ParentNodeRef.Node-&gt;LeafMask &amp;= ClearMsk;
+                ParentNodeRef.Node-&gt;OccupiedMask &amp;= ClearMsk;
+
+                <span class="Statement">return</span>;
+            }
+
+            <span class="Conditional">if</span> (IsOctantLeaf(ParentNodeRef.Node, CurrentOct))
+            {
+                ParentNodeRef = DeleteLeafChild(CurrentOct, Tree, ParentNodeRef);
+                CreatedChild = <span class="Constant">true</span>;
+            }
+            <span class="Conditional">else</span>
+            {
+                <span class="Comment">// Traverse deeper into the tree</span>
+                ParentNodeRef = GetNodeChild(ParentNodeRef, CurrentOct);
+            }
+        }
+        <span class="Conditional">else</span>
+        {
+            <span class="Statement">return</span>;
+        }
+
+        ParentCentre = GetOctantCentre(CurrentOct, CurrentScale, ParentCentre);
+        CurrentOct = GetOctantForPosition(DeleteP, ParentCentre);
+    }
+}
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">void</span>
+DeleteScene(svo* Tree)
+{
+    <span class="Conditional">if</span> (<span class="Constant">nullptr</span> != Tree)
+    {
+        svo_block* CurrentBlk = Tree-&gt;RootBlock;
+
+        <span class="Statement">while</span> (<span class="Constant">nullptr</span> != CurrentBlk)
+        {
+            svo_block* NextBlk = CurrentBlk-&gt;Next;
+            free(CurrentBlk);
+            CurrentBlk = NextBlk;
+        }
+
+        free(Tree);
+    }
+}
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">unsigned</span> <span class="Type">int</span>
+GetSvoUsedBlockCount(<span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Svo)
+{
+    <span class="Statement">return</span> Svo-&gt;UsedBlockCount;
+}
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">unsigned</span> <span class="Type">int</span>
+GetSvoDepth(<span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Svo)
+{
+    <span class="Statement">return</span> Svo-&gt;MaxDepth;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">bool</span>
+BoxFrustumIntersection(<span class="StorageClass">const</span> frustum3* <span class="StorageClass">const</span> F, vec3 Min, vec3 Max)
+{
+    <span class="Statement">for</span>( <span class="Type">int</span> Plane = <span class="Constant">0</span>; Plane &lt; <span class="Constant">6</span>; Plane++ )
+    {
+        <span class="Type">int</span> Out = <span class="Constant">0</span>;
+        Out += ((Dot(F-&gt;Planes[Plane], vec3(Min.X, Min.Y, Min.Z)) &lt; <span class="Constant">0.0f</span>)?<span class="Constant">1</span>:<span class="Constant">0</span>);
+        Out += ((Dot(F-&gt;Planes[Plane], vec3(Max.X, Min.Y, Min.Z)) &lt; <span class="Constant">0.0f</span>)?<span class="Constant">1</span>:<span class="Constant">0</span>);
+        Out += ((Dot(F-&gt;Planes[Plane], vec3(Min.X, Max.Y, Min.Z)) &lt; <span class="Constant">0.0f</span>)?<span class="Constant">1</span>:<span class="Constant">0</span>);
+        Out += ((Dot(F-&gt;Planes[Plane], vec3(Max.X, Max.Y, Min.Z)) &lt; <span class="Constant">0.0f</span>)?<span class="Constant">1</span>:<span class="Constant">0</span>);
+        Out += ((Dot(F-&gt;Planes[Plane], vec3(Min.X, Min.Y, Max.Z)) &lt; <span class="Constant">0.0f</span>)?<span class="Constant">1</span>:<span class="Constant">0</span>);
+        Out += ((Dot(F-&gt;Planes[Plane], vec3(Max.X, Min.Y, Max.Z)) &lt; <span class="Constant">0.0f</span>)?<span class="Constant">1</span>:<span class="Constant">0</span>);
+        Out += ((Dot(F-&gt;Planes[Plane], vec3(Min.X, Max.Y, Max.Z)) &lt; <span class="Constant">0.0f</span>)?<span class="Constant">1</span>:<span class="Constant">0</span>);
+        Out += ((Dot(F-&gt;Planes[Plane], vec3(Max.X, Max.Y, Max.Z)) &lt; <span class="Constant">0.0f</span>)?<span class="Constant">1</span>:<span class="Constant">0</span>);
+        <span class="Conditional">if</span>(<span class="Constant">8</span> == Out) <span class="Statement">return</span> <span class="Constant">false</span>;
+    }
+
+    <span class="Statement">return</span> <span class="Constant">true</span>;
+}
+
+<span class="PreProc">#if 0</span>
+<span class="Comment">static inline void</span>
+<span class="Comment">ComputeFrustumFromEyeAndDir(vec3 Eye, vec3 Dir, frustum3* const FOut)</span>
+<span class="Comment">{</span>
+<span class="Comment">    vec3 TopRightNear = vec3(Eye.X + 256, Eye.Y + 256, </span>
+<span class="Comment">}</span>
+<span class="PreProc">#endif</span>
+
+<span class="PreProc">#if 0</span>
+<span class="Comment">extern &quot;C&quot; void</span>
+<span class="Comment">HighestVisibleAncestor(const svo* const Svo, vec3 EyePos, vec3 EyeDir)</span>
+<span class="Comment">{</span>
+<span class="Comment">    frustum3 ViewFrustum;</span>
+<span class="Comment">    ComputeFrustumFromEyeAndDir(EyePos, EyeDir, &amp;ViewFrustum);</span>
+<span class="Comment">}</span>
+<span class="PreProc">#endif</span>
+
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

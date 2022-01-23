@@ -1,0 +1,15 @@
+baseURL = "/"
+languageCode = "en-us"
+title = "Liam Power"
+theme = "liam"
+
+[markup]
+  [markup.highlight]
+    style = "dracula"
+    tabWidth = 4
+    noClasses = false
+  [markup.tableOfContents]
+    ordered = true
+  [markup.goldmark.renderer]
+    unsafe=true
+

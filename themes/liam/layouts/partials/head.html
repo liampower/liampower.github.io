@@ -1,0 +1,20 @@
+<head>
+    {{ hugo.Generator }}
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,minimal-ui">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <meta name="referrer" content="no-referrer">
+    {{ if .Title }}
+        <title>{{ .Title }} | Liam Power</title>
+    {{ else }}
+        <title>Liam Power</title>
+    {{ end }}
+    {{ if .Summary }}
+        <meta name="description" content="{{ .Summary }}">
+    {{ end }}
+    <meta name="author" content="{{ with .Site.Params.author }}{{ . }}{{ end }}">
+
+    <link rel="stylesheet" href="/style.css" type="text/css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:ital@0;1&display=swap" rel="stylesheet">
+</head>
+

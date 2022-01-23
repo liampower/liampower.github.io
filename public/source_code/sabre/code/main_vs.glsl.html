@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/main_vs.glsl.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="glsl">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Constant { color: #cf6b4c; }
+.Identifier { color: #99ad6a; }
+.PreProc { color: #ba9875; }
+.StorageClass { color: #ffcc33; }
+.Type { color: #ffcc33; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#version 450 core</span>
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">0</span>) <span class="StorageClass">in</span> <span class="Type">vec2</span> Position;
+
+<span class="StorageClass">out</span> <span class="Type">vec2</span> UV;
+
+<span class="Type">void</span> main()
+{
+    <span class="Identifier">gl_Position</span> = <span class="Type">vec4</span>(Position, <span class="Constant">0.0</span>, <span class="Constant">1.0</span>);
+    UV = Position*<span class="Constant">0.5</span> + <span class="Constant">0.5</span>;
+}
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

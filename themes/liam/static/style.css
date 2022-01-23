@@ -1,0 +1,155 @@
+html,body {
+    height: 100%;
+}
+
+body {
+    background: Black;
+    color: Tan;
+    font-size: 16px;
+    line-height: 1.5;
+    margin: 0;
+    font-family: 'Roboto Slab', serif;
+}
+
+article img {
+    display: block;
+    min-width: 100%;
+    min-height: 100%;
+}
+
+figure {
+    margin: 0;
+}
+
+figure figcaption {
+    font-style: italic;
+    text-align: center;
+}
+
+article nav {
+    text-align: left;
+    padding: 0rem;
+}
+
+h1,h2,h3,h4,h5,h6 {
+    font-weight: normal;
+}
+
+h1 {
+    font-size: 200%;
+}
+
+main {
+    max-width: 56rem;
+    margin: auto;
+}
+
+h2 {
+    font-size: 130%;
+    border-bottom: 1px solid;
+}
+
+a {
+    color: cornflowerblue;
+}
+
+
+nav.menu {
+    text-align: center;
+}
+
+nav.menu ol {
+    list-style-type: none;
+}
+
+nav.menu ol li {
+    display: inline;
+    margin: 0rem 1rem;
+}
+nav.menu ol li > a{
+    text-transform: uppercase;
+    text-decoration: none;
+    color: tan;
+    padding: 0rem 0.3rem;
+}
+
+nav.menu ol li > a:hover{
+    color: #0f0f0f;
+    background: tan;
+}
+
+nav.menu ol {
+    margin: 0rem;
+    padding: 0rem;
+    display: inline;
+}
+
+nav.menu ol::before {
+    content: "[";
+}
+
+nav.menu ol::after {
+    content: "]";
+}
+
+pre {
+    overflow-x: auto;
+}
+
+article > header {
+    margin: 2rem 0rem;
+}
+article > header p {
+    margin: 0rem;
+}
+
+article > header h1 {
+    margin: 0rem;
+}
+
+ol li {
+    margin: 1rem 0rem;
+}
+
+li p {
+    margin: 0rem;
+}
+
+
+hgroup {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+}
+
+hgroup h3 {
+    margin: 0;
+}
+
+header em {
+    margin: 0;
+}
+
+footer {
+    margin: 3.5rem 0rem;
+}
+
+section.toc {
+    margin: 0;
+    padding: 0;
+}
+
+section.toc li {
+    margin: 0;
+}
+
+section {
+    margin: 2rem 0rem;
+}
+section > section {
+    margin: 0rem;
+}
+
+code {
+    font-size: 14px;
+}

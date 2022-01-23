@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/sabre_windows.cc.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="cpp">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Operator { color: #ba9875; }
+.Constant { color: #cf6b4c; }
+.Special { color: #ba9875; }
+.Conditional { color: #ffcc33; }
+.Statement { color: #ffcc33; }
+.PreProc { color: #ba9875; }
+.Type { color: #ffcc33; }
+.Todo { color: #cf6b4c; }
+.StorageClass { color: #ffcc33; }
+.Comment { color: #707070; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#define WIN32_LEAN_AND_MEAN</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;Windows.h&gt;</span>
+
+<span class="PreProc">#include </span><span class="Constant">&lt;imgui/imgui.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;imgui/imgui_impl_glfw.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;imgui/imgui_impl_opengl3.h&gt;</span>
+
+<span class="PreProc">#include </span><span class="Constant">&lt;stdio.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;stdlib.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;stdint.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;assert.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;vector&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;string&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;nanoprofile.h&gt;</span>
+
+<span class="PreProc">#include </span><span class="Constant">&lt;glad/glad.h&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;glfw/glfw3.h&gt;</span>
+
+<span class="PreProc">#include </span><span class="Constant">&quot;sabre.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;svo.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;render.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;noise_gen.hh&quot;</span>
+
+<span class="Statement">using</span> <span class="Structure">namespace</span> vm;
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u32 DEMO_MAX_TREE_DEPTH = <span class="Constant">12</span>;
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u32 DEMO_SCALE_EXPONENT = <span class="Constant">5</span>;
+
+<span class="Comment">// Dimensions of the window the user sees</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u32 DISPLAY_WIDTH  = <span class="Constant">1280</span>;
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u32 DISPLAY_HEIGHT = <span class="Constant">720</span>;
+
+<span class="Comment">// Dimensions of the rendered scene. If these values differ from their DISPLAY</span>
+<span class="Comment">// counterparts, then the GPU will automatically scale the rendered texture up</span>
+<span class="Comment">// or down to match the window dimensions. It is *these* values, *not* DISPLAY</span>
+<span class="Comment">// width or height, that have the biggest impact on render performance.</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u32 RENDER_WIDTH  = <span class="Constant">1024</span>;
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u32 RENDER_HEIGHT = <span class="Constant">768</span>;
+
+<span class="Comment">// How many seconds to wait before checking for updated shader files.</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> f64 SHADER_FILE_CHECK_HZ = <span class="Constant">0.5</span>;
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> <span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> DISPLAY_TITLE = <span class="Constant">&quot;Sabre&quot;</span>;
+
+<span class="Structure">struct</span> scene
+{
+    <span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> Name;
+    <span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> Path;
+};
+
+<span class="Structure">struct</span> shader_files
+{
+    <span class="StorageClass">const</span> <span class="Type">char</span>* Contents[SHADER_ID_COUNT];
+    <span class="StorageClass">const</span> <span class="Type">char</span>* FileName[SHADER_ID_COUNT];
+    FILETIME    LastModified[SHADER_ID_COUNT];
+};
+
+<span class="StorageClass">static</span> <span class="StorageClass">const</span> scene GlobalSceneTable[] = {
+    { <span class="Constant">&quot;Sibenik&quot;</span>, <span class="Constant">&quot;data/Showcase/sib2.glb&quot;</span> },
+    { <span class="Constant">&quot;UV Cube&quot;</span>, <span class="Constant">&quot;data/Showcase/tex_cube.glb&quot;</span> },
+    { <span class="Constant">&quot;Fireplace Room&quot;</span>, <span class="Constant">&quot;data/Showcase/fireplace_room.glb&quot;</span> },
+    { <span class="Constant">&quot;Gallery&quot;</span>, <span class="Constant">&quot;data/Showcase/gallery.glb&quot;</span> },
+    { <span class="Constant">&quot;Dragon&quot;</span>, <span class="Constant">&quot;data/Showcase/dragon.glb&quot;</span> },
+    { <span class="Constant">&quot;Bunny&quot;</span>, <span class="Constant">&quot;data/Showcase/bunny.glb&quot;</span> },
+    { <span class="Constant">&quot;Buddha&quot;</span>, <span class="Constant">&quot;data/Showcase/buddha.glb&quot;</span> },
+    { <span class="Constant">&quot;Serapis&quot;</span>, <span class="Constant">&quot;data/Showcase/serapis.glb&quot;</span> },
+    { <span class="Constant">&quot;Indonesian&quot;</span>, <span class="Constant">&quot;data/Showcase/Indonesian.glb&quot;</span> },
+    { <span class="Constant">&quot;Face&quot;</span>, <span class="Constant">&quot;data/Showcase/face.glb&quot;</span> },
+};
+
+<span class="StorageClass">static</span> <span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> ShaderFileNames[SHADER_ID_COUNT] = {
+    <span class="Constant">&quot;code/main_vs.glsl&quot;</span>,
+    <span class="Constant">&quot;code/main_fs.glsl&quot;</span>,
+    <span class="Constant">&quot;code/render_cs.glsl&quot;</span>,
+    <span class="Constant">&quot;code/htable_cs.glsl&quot;</span>,
+};
+
+<span class="Comment">// NOTE(Liam): Forces use of nVidia GPU on hybrid graphics systems.</span>
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> {
+    __declspec(dllexport) <span class="Type">unsigned</span> <span class="Type">int</span> NvOptimusEnablement = <span class="Constant">0x00000001</span>;
+}
+
+<span class="Structure">struct</span> camera
+{
+    f32  Velocity;
+
+    vec3 Up;
+    vec3 Right;
+    vec3 Forward;
+    vec3 Position;
+};
+
+<span class="Structure">struct</span> sphere
+{
+    vec3 Centre;
+    f32  Radius;
+};
+
+<span class="StorageClass">static</span> <span class="Type">char</span>*
+ReadEntireFile(<span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> Path)
+{
+    <span class="Type">FILE</span>* File;
+    fopen_s(&amp;File, Path, <span class="Constant">&quot;rb&quot;</span>);
+    <span class="Conditional">if</span> (<span class="Constant">nullptr</span> == File)
+    {
+        fprintf(<span class="Constant">stderr</span>, <span class="Constant">&quot;Failed to open file</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+
+    std::fseek(File, <span class="Constant">0L</span>, <span class="Constant">SEEK_END</span>);
+    usize FileSize = <span class="Statement">static_cast</span>&lt;usize&gt;(std::ftell(File));
+    std::rewind(File);
+
+    <span class="Type">void</span>* FileData = <span class="Statement">static_cast</span>&lt;<span class="Type">char</span>*&gt;(std::calloc(<span class="Constant">1</span>, FileSize + <span class="Constant">1</span>));
+    <span class="Conditional">if</span> (<span class="Constant">nullptr</span> == FileData)
+    {
+        fprintf(<span class="Constant">stderr</span>, <span class="Constant">&quot;Failed to alloc file data</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+        fclose(File);
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+
+    std::fread(FileData, FileSize, <span class="Constant">1</span>, File);
+    std::fclose(File);
+
+    <span class="Type">char</span>* DataBytes = <span class="Statement">static_cast</span>&lt;<span class="Type">char</span>*&gt;(FileData);
+    DataBytes[FileSize] = <span class="Special">'\0'</span>;
+
+    <span class="Statement">return</span> DataBytes;
+}
+
+<span class="StorageClass">static</span> <span class="Type">void</span>
+HandleOpenGLError(GLenum Src, GLenum Type, GLenum ID, GLenum Severity, GLsizei Length, <span class="StorageClass">const</span> GLchar* Msg, <span class="StorageClass">const</span> <span class="Type">void</span>*)
+{
+    <span class="Conditional">if</span> (GL_DEBUG_TYPE_ERROR == Type)
+    {
+        fprintf(<span class="Constant">stderr</span>, <span class="Constant">&quot;[OpenGL Error] </span><span class="Special">%s</span><span class="Special">\n</span><span class="Constant">&quot;</span>, Msg);
+    }
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> f32
+Squared(f32 X)
+{
+    <span class="Statement">return</span> X*X;
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+OutputGraphicsDeviceInfo(<span class="Type">void</span>)
+{
+    printf(<span class="Constant">&quot;Graphics Vendor: </span><span class="Special">%s</span><span class="Special">\n</span><span class="Constant">&quot;</span>, glGetString(GL_VENDOR));
+    printf(<span class="Constant">&quot;Graphics Renderer: </span><span class="Special">%s</span><span class="Special">\n</span><span class="Constant">&quot;</span>, glGetString(GL_RENDERER));
+}
+
+<span class="Comment">// NOTE(Liam): Warning! Does not work if Min,Max are not the **actual** (dimension-wise) min and</span>
+<span class="Comment">// max corners.</span>
+<span class="Comment">//</span>
+<span class="Comment">// Tree parameter ignored here.</span>
+<span class="StorageClass">static</span> <span class="Type">bool</span>
+CubeSphereIntersection(vec3 Min, vec3 Max, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span>, <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span> UserData)
+{
+    <span class="StorageClass">const</span> vec3 S = ((<span class="StorageClass">const</span> sphere* <span class="StorageClass">const</span>)UserData)-&gt;Centre;<span class="Comment">//vec3(16);</span>
+    <span class="StorageClass">const</span> f32 R = ((<span class="StorageClass">const</span> sphere* <span class="StorageClass">const</span>)UserData)-&gt;Radius;<span class="Comment">//8;</span>
+
+    f32 DistanceSqToCube = R * R;
+
+    <span class="Comment">// STACKOVER</span>
+    <span class="Conditional">if</span> (S.X &lt; Min.X) DistanceSqToCube -= Squared(S.X - Min.X);
+    <span class="Conditional">else</span> <span class="Conditional">if</span> (S.X &gt; Max.X) DistanceSqToCube -= Squared(S.X - Max.X);
+
+    <span class="Conditional">if</span> (S.Y &lt; Min.Y) DistanceSqToCube -= Squared(S.Y - Min.Y);
+    <span class="Conditional">else</span> <span class="Conditional">if</span> (S.Y &gt; Max.Y) DistanceSqToCube -= Squared(S.Y - Max.Y);
+
+    <span class="Conditional">if</span> (S.Z &lt; Min.Z) DistanceSqToCube -= Squared(S.Z - Min.Z);
+    <span class="Conditional">else</span> <span class="Conditional">if</span> (S.Z &gt; Max.Z) DistanceSqToCube -= Squared(S.Z - Max.Z);
+
+    <span class="Statement">return</span> DistanceSqToCube &gt;= <span class="Constant">0</span>;
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+SphereNormal(vec3 C, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span>, <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span> UserData)
+{
+    <span class="StorageClass">const</span> vec3 S = vec3(<span class="Constant">16</span>);
+
+    <span class="Statement">return</span> Normalize(C - S);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> vec3
+SphereColour(vec3 C, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span>, <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span>)
+{
+    <span class="Statement">return</span> vec3(<span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">1</span>);
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> svo*
+CreateCubeSphereTestScene(u32 Lod)
+{
+    sphere Sphere = { vec3{<span class="Constant">16.0f</span>, <span class="Constant">16.0f</span>, <span class="Constant">16.0f</span>}, <span class="Constant">8.0f</span> };
+
+    shape_sampler ShapeSampler = shape_sampler{ &amp;Sphere, &amp;CubeSphereIntersection };
+    data_sampler NormalSampler = data_sampler{ &amp;Sphere, &amp;SphereNormal };
+    data_sampler ColourSampler = data_sampler{ &amp;Sphere, &amp;SphereColour };
+
+    svo* WorldSvo = CreateScene(DEMO_SCALE_EXPONENT,
+                                Lod,
+                                &amp;ShapeSampler,
+                                &amp;NormalSampler,
+                                &amp;ColourSampler);
+
+    <span class="Statement">return</span> WorldSvo;
+}
+
+
+<span class="StorageClass">static</span> vec3
+UnprojectViewDirection(<span class="StorageClass">const</span> camera&amp; Cam)
+{
+    <span class="Comment">// Unproject the MouseX &amp; Y positions into worldspace.</span>
+    vec3 D = vec3(f32(<span class="Constant">512</span>) / <span class="Constant">2.0f</span>, f32(<span class="Constant">512</span>) / <span class="Constant">2.0f</span>, <span class="Constant">0.0f</span>);
+
+    <span class="Comment">// Origin of the screen plane in world-space</span>
+    vec3 WorldVOrigin = Cam.Position - vec3(<span class="Constant">256</span>, <span class="Constant">256</span>, <span class="Constant">512</span>);
+    D = WorldVOrigin + D;
+
+    vec3 R = Normalize(D - Cam.Position);
+
+    mat3x3 CameraMatrix = mat3x3{{
+        { Cam.Right.X, Cam.Right.Y, Cam.Right.Z },
+        { Cam.Up.X, Cam.Up.Y, Cam.Up.Z },
+        { -Cam.Forward.X, -Cam.Forward.Y, -Cam.Forward.Z },
+    }};
+
+    R = R * CameraMatrix;
+
+    <span class="Statement">return</span> R;
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">void</span>
+InsertVoxelAtMousePoint(f64 MouseX, f64 MouseY, <span class="StorageClass">const</span> camera&amp; Cam, svo* Svo)
+{
+    vec3 R = UnprojectViewDirection(Cam);
+    vec3 VoxelPos = GetNearestFreeSlot(Cam.Position, R, Svo);
+    DEBUGPrintVec3(VoxelPos);
+    InsertVoxel(Svo, VoxelPos);
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">void</span>
+DeleteVoxelAtMousePoint(f64 MouseX, f64 MouseY, <span class="StorageClass">const</span> camera&amp; Cam, svo* Svo)
+{
+    vec3 R = UnprojectViewDirection(Cam);
+    vec3 VoxelPos = GetNearestLeafSlot(Cam.Position, R, Svo);
+    DeleteVoxel(Svo, VoxelPos);
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">void</span>
+HandleGLFWError(<span class="Type">int</span>, <span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> ErrorMsg)
+{
+    MessageBox(<span class="Constant">nullptr</span>, ErrorMsg, <span class="Constant">&quot;GLFW Error&quot;</span>, MB_ICONWARNING);
+}
+
+
+<span class="StorageClass">static</span> u32
+ReloadChangedShaders(shader_files* Files)
+{
+    u32 ChangedMsk = <span class="Constant">0x00</span>;
+    <span class="Statement">for</span> (u32 ID = <span class="Constant">0</span>; ID &lt; SHADER_ID_COUNT; ++ID)
+    {
+        WIN32_FILE_ATTRIBUTE_DATA AttrData;
+        GetFileAttributesExA(Files-&gt;FileName[ID],
+                             GetFileExInfoStandard,
+                             &amp;AttrData);
+        FILETIME LastModified = AttrData.ftLastWriteTime;
+
+        <span class="Conditional">if</span> (<span class="Constant">0</span> != CompareFileTime(&amp;LastModified, &amp;Files-&gt;LastModified[ID]))
+        {
+            printf(<span class="Constant">&quot;Got new file for shader id </span><span class="Special">%d</span><span class="Special">\n</span><span class="Constant">&quot;</span>, ID);
+            <span class="StorageClass">const</span> <span class="Type">char</span>* OldContents = Files-&gt;Contents[ID];
+            Files-&gt;Contents[ID] = ReadEntireFile(ShaderFileNames[ID]);
+            assert(Files-&gt;Contents[ID]);
+            Files-&gt;LastModified[ID] = LastModified;
+
+            free((<span class="Type">void</span>*)OldContents);
+
+            ChangedMsk |= ID;
+        }
+    }
+
+    <span class="Statement">return</span> ChangedMsk;
+}
+
+
+<span class="StorageClass">static</span> shader_files*
+LoadShaderFiles(<span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> FileNames[SHADER_ID_COUNT])
+{
+    shader_files* Files = (shader_files*)calloc(<span class="Constant">1</span>, <span class="Operator">sizeof</span>(shader_files));
+    assert(Files);
+
+    <span class="Statement">for</span> (u32 ID = <span class="Constant">0</span>; ID &lt; SHADER_ID_COUNT; ++ID)
+    {
+        <span class="StorageClass">const</span> <span class="Type">char</span>* Contents = ReadEntireFile(FileNames[ID]);
+        assert(Contents);
+
+        WIN32_FILE_ATTRIBUTE_DATA AttrData;
+        GetFileAttributesExA(Files-&gt;FileName[ID],
+                             GetFileExInfoStandard,
+                             &amp;AttrData);
+        FILETIME LastModified = AttrData.ftLastWriteTime;
+
+        Files-&gt;Contents[ID] = Contents;
+        Files-&gt;LastModified[ID] = LastModified;
+        Files-&gt;FileName[ID] = FileNames[ID];
+    }
+
+    <span class="Statement">return</span> Files;
+}
+
+<span class="StorageClass">static</span> <span class="Type">void</span>
+DeleteShaderFiles(shader_files* Files)
+{
+    <span class="Statement">for</span> (u32 ShaderID = <span class="Constant">0</span>; ShaderID &lt; SHADER_ID_COUNT; ++ShaderID)
+    {
+        free((<span class="Type">void</span>*)Files-&gt;Contents[ShaderID]);
+    }
+
+    free(Files);
+}
+
+<span class="StorageClass">static</span> <span class="Type">bool</span>
+SceneSelectionMenu(svo** WorldSvo, <span class="Type">int</span>* LodOut)
+{
+    <span class="Type">bool</span> ShowMenu = <span class="Constant">true</span>;
+    <span class="Type">int</span> Lod = *LodOut;
+
+    <span class="Conditional">if</span> (! ImGui::Begin(<span class="Constant">&quot;Sabre Viewer Demo&quot;</span>))
+    {
+        ImGui::End();
+    }
+
+    ImGui::SliderInt(<span class="Constant">&quot;Level of Detail&quot;</span>, &amp;Lod, <span class="Constant">0</span>, DEMO_MAX_TREE_DEPTH);
+    ImGui::TextUnformatted(<span class="Constant">&quot;Higher levels will take longer to generate&quot;</span>);
+    ImGui::Separator();
+
+    <span class="Statement">for</span> (usize ScIndex = <span class="Constant">0</span>; ScIndex &lt; ArrayCount(GlobalSceneTable); ++ScIndex)
+    {
+        <span class="StorageClass">const</span> scene&amp; Scene = GlobalSceneTable[ScIndex];
+        <span class="Conditional">if</span> (ImGui::Button(Scene.Name))
+        {
+            *WorldSvo = ImportGLBFile(SafeIntToU32(Lod), Scene.Path);
+            ShowMenu = <span class="Constant">false</span>;
+        }
+    }
+
+    <span class="Conditional">if</span> (ImGui::Button(<span class="Constant">&quot;Noise&quot;</span>))
+    {
+        *WorldSvo = BuildNoiseSvo(SafeIntToU32(Lod), <span class="Constant">5</span>);
+        ShowMenu = <span class="Constant">false</span>;
+    }
+
+    <span class="Conditional">if</span> (ImGui::Button(<span class="Constant">&quot;Sphere&quot;</span>))
+    {
+        *WorldSvo = CreateCubeSphereTestScene(SafeIntToU32(Lod));
+        ShowMenu = <span class="Constant">false</span>;
+    }
+
+    ImGui::End();
+    *LodOut = Lod;
+
+    <span class="Statement">return</span> ShowMenu;
+}
+
+
+<span class="StorageClass">extern</span> <span class="Type">int</span>
+main(<span class="Type">int</span> ArgCount, <span class="StorageClass">const</span> <span class="Type">char</span>** <span class="StorageClass">const</span> Args)
+{
+    np_profile Prof;
+    np_event* EvtStorage = (np_event*)malloc(<span class="Constant">1000</span>*<span class="Operator">sizeof</span>(np_event));
+    NP_InitProfile(EvtStorage, <span class="Constant">1000</span>, &amp;Prof);
+
+    NP_PushTraceEvent(&amp;Prof, <span class="Constant">&quot;Init&quot;</span>);
+    NP_PushTraceEvent(&amp;Prof, <span class="Constant">&quot;Init GLFW&quot;</span>);
+    glfwSetErrorCallback(HandleGLFWError);
+    <span class="Conditional">if</span> (GLFW_FALSE == glfwInit())
+    {
+        fprintf(<span class="Constant">stderr</span>, <span class="Constant">&quot;Failed to initialise GLFW</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+        MessageBox(<span class="Constant">nullptr</span>,
+                   <span class="Constant">&quot;Failed to initialise GLFW</span><span class="Special">\n</span><span class="Constant">&quot;</span>,
+                   <span class="Constant">&quot;Error&quot;</span>,
+                   MB_ICONWARNING);
+
+        free(EvtStorage);
+        <span class="Statement">return</span> <span class="Constant">EXIT_FAILURE</span>;
+    }
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, <span class="Constant">4</span>);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, <span class="Constant">5</span>);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+
+    GLFWwindow* Window = glfwCreateWindow(DISPLAY_WIDTH,
+                                          DISPLAY_HEIGHT,
+                                          DISPLAY_TITLE,
+                                          <span class="Constant">nullptr</span>,
+                                          <span class="Constant">nullptr</span>);
+    printf(<span class="Constant">&quot;Created window</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+    glfwMakeContextCurrent(Window);
+    glfwSetWindowPos(Window, <span class="Constant">100</span>, <span class="Constant">100</span>);
+    glfwSwapInterval(<span class="Constant">1</span>);
+    NP_PopTraceEvent(&amp;Prof);
+
+    NP_PushTraceEvent(&amp;Prof, <span class="Constant">&quot;Init GLAD&quot;</span>);
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == gladLoadGL())
+    {
+        fprintf(<span class="Constant">stderr</span>, <span class="Constant">&quot;Failed to initialise GLAD</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+        MessageBox(<span class="Constant">nullptr</span>,
+                   <span class="Constant">&quot;Failed to initialise OpenGL context, make sure you are running this application with up-to-date graphics drivers&quot;</span>,
+                   <span class="Constant">&quot;Error&quot;</span>,
+                   MB_ICONWARNING);
+
+        free(EvtStorage);
+        glfwTerminate();
+        <span class="Statement">return</span> <span class="Constant">EXIT_FAILURE</span>;
+    }
+    NP_PopTraceEvent(&amp;Prof);
+
+    OutputGraphicsDeviceInfo();
+
+    NP_PushTraceEvent(&amp;Prof, <span class="Constant">&quot;Init ImGUI&quot;</span>);
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+
+    <span class="Comment">// Setup Platform/Renderer bindings</span>
+    ImGui_ImplGlfw_InitForOpenGL(Window, <span class="Constant">true</span>);
+    ImGui_ImplOpenGL3_Init(<span class="Constant">&quot;#version 430 core&quot;</span>);
+    NP_PopTraceEvent(&amp;Prof);
+
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_DEPTH_CLAMP);
+    glEnable(GL_DEBUG_OUTPUT);
+    glDebugMessageCallback(HandleOpenGLError, <span class="Constant">nullptr</span>);
+
+    <span class="Type">int</span> FramebufferWidth;
+    <span class="Type">int</span> FramebufferHeight;
+    glfwGetFramebufferSize(Window, &amp;FramebufferWidth, &amp;FramebufferHeight);
+    glViewport(<span class="Constant">0</span>, <span class="Constant">0</span>, FramebufferWidth, FramebufferHeight);
+
+    svo* WorldSvo = <span class="Constant">nullptr</span>;
+
+    <span class="Comment">// </span><span class="Todo">FIXME</span><span class="Comment">: BROKEN!! Last two members left uninitialised!</span>
+    <span class="Comment">// Initialise the render data</span>
+    view_data ViewData = { };
+    ViewData.ScreenWidth = RENDER_WIDTH;
+    ViewData.ScreenHeight = RENDER_HEIGHT;
+
+    render_data* RenderData = <span class="Constant">nullptr</span>;
+
+    camera Cam;
+    Cam.Forward = vec3(<span class="Constant">0</span>, <span class="Constant">0</span>, -<span class="Constant">1</span>);
+    Cam.Right = vec3(<span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">0</span>);
+    Cam.Up = vec3(<span class="Constant">0</span>, <span class="Constant">1</span>, <span class="Constant">0</span>);
+    Cam.Position = vec3(<span class="Constant">4</span>, <span class="Constant">4</span>, <span class="Constant">96</span>);
+    Cam.Velocity = <span class="Constant">0.15f</span>;
+
+    <span class="StorageClass">const</span> vec3 WorldYAxis = vec3(<span class="Constant">0</span>, <span class="Constant">1</span>, <span class="Constant">0</span>);
+
+    f64 LastMouseX, LastMouseY;
+    glfwGetCursorPos(Window, &amp;LastMouseX, &amp;LastMouseY);
+
+    <span class="Comment">// NOTE: Camera yaw and pitch</span>
+    f32 Yaw, Pitch;
+
+    f64 DeltaTime = <span class="Constant">0.0</span>;
+    f64 FrameStartTime = <span class="Constant">0.0</span>;
+    f64 FrameEndTime = <span class="Constant">0.0</span>;
+
+    f64 LastMouseLTime = <span class="Constant">0.0</span>;
+    f64 LastMouseRTime = <span class="Constant">0.0</span>;
+
+    <span class="Type">int</span> Lod = <span class="Constant">0</span>;
+
+    <span class="Type">bool</span> ShowMenu = <span class="Constant">true</span>;
+    u64 GPUTime = <span class="Constant">0</span>;
+    NP_PopTraceEvent(&amp;Prof); <span class="Comment">// Init</span>
+
+    shader_files* ShaderFiles = LoadShaderFiles(ShaderFileNames);
+    shader_data Shaders{ ShaderFiles-&gt;Contents };
+    printf(<span class="Constant">&quot;Contents: </span><span class="Special">%s</span><span class="Special">\n</span><span class="Constant">&quot;</span>, *ShaderFiles-&gt;Contents);
+    f64 LastShaderCheckTime = <span class="Constant">0.0</span>;
+
+    <span class="Statement">while</span> (GLFW_FALSE == glfwWindowShouldClose(Window))
+    {
+        FrameStartTime = glfwGetTime();
+        glfwPollEvents();
+
+        glClearColor(<span class="Constant">0.02f</span>, <span class="Constant">0.02f</span>, <span class="Constant">0.02f</span>, <span class="Constant">1.0f</span>);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        <span class="Conditional">if</span> (glfwGetKey(Window, GLFW_KEY_Q))
+        {
+            glfwSetWindowShouldClose(Window, GLFW_TRUE);
+        }
+
+        <span class="Conditional">if</span> (ShowMenu)
+        {
+            ShowMenu = SceneSelectionMenu(&amp;WorldSvo, &amp;Lod);
+
+            <span class="Conditional">if</span> (<span class="Constant">false</span> == ShowMenu)
+            {
+                RenderData = CreateRenderData(WorldSvo, &amp;ViewData, &amp;Shaders);
+                glfwSetInputMode(Window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                <span class="Conditional">if</span> (<span class="Constant">nullptr</span> == RenderData)
+                {
+                    fprintf(<span class="Constant">stderr</span>, <span class="Constant">&quot;Failed to initialise render data</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+                    MessageBox(<span class="Constant">nullptr</span>,
+                               <span class="Constant">&quot;Failed to initialise render data</span><span class="Special">\n</span><span class="Constant">&quot;</span>,
+                               <span class="Constant">&quot;Error&quot;</span>,
+                               MB_ICONWARNING);
+
+                    DeleteScene(WorldSvo);
+                    free(EvtStorage);
+                    glfwTerminate();
+                    <span class="Statement">return</span> <span class="Constant">EXIT_FAILURE</span>;
+                }
+            }
+        }
+        <span class="Conditional">else</span>
+        {
+            <span class="Conditional">if</span> (<span class="Constant">nullptr</span> == WorldSvo)
+            {
+                fprintf(<span class="Constant">stderr</span>, <span class="Constant">&quot;Failed to initialise SVO data</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+                MessageBox(<span class="Constant">nullptr</span>,
+                           <span class="Constant">&quot;Failed to initialise SVO data</span><span class="Special">\n</span><span class="Constant">&quot;</span>,
+                           <span class="Constant">&quot;Error&quot;</span>,
+                           MB_ICONWARNING);
+
+                DeleteScene(WorldSvo);
+                free(EvtStorage);
+                glfwTerminate();
+                <span class="Statement">return</span> <span class="Constant">EXIT_FAILURE</span>;
+            }
+
+            <span class="Conditional">if</span> (WorldSvo)
+            {
+                f64 CurrentTime = glfwGetTime();
+                <span class="Conditional">if</span> (ImGui::BeginMainMenuBar())
+                {
+                    ImGui::Text(<span class="Constant">&quot;</span><span class="Special">%f</span><span class="Constant">ms CPU  </span><span class="Special">%f</span><span class="Constant">ms GPU  </span><span class="Special">%d</span><span class="Constant"> BLKS  </span><span class="Special">%d</span><span class="Constant"> LVLS  </span><span class="Special">%llu</span><span class="Constant"> DATA&quot;</span>,
+                                 <span class="Constant">1000.0</span>*DeltaTime,
+                                 f64(GPUTime) / <span class="Constant">1000000.0</span>,
+                                 GetSvoUsedBlockCount(WorldSvo),
+                                 GetSvoDepth(WorldSvo),
+                                 WorldSvo-&gt;AttribData.size());
+                    ImGui::EndMainMenuBar();
+                }
+
+                <span class="Comment">// Every 0.5 seconds, check if we need to update the shaders</span>
+                <span class="Conditional">if</span> ((CurrentTime - LastShaderCheckTime) &gt;= SHADER_FILE_CHECK_HZ)
+                {
+                    u32 ChMsk = ReloadChangedShaders(ShaderFiles);
+                    UpdateRenderShaders(WorldSvo, &amp;Shaders, ChMsk, RenderData);
+                    LastShaderCheckTime = CurrentTime;
+                }
+
+                <span class="Conditional">if</span> (glfwGetKey(Window, GLFW_KEY_W)) Cam.Position += Cam.Forward * Cam.Velocity;
+                <span class="Conditional">if</span> (glfwGetKey(Window, GLFW_KEY_S)) Cam.Position -= Cam.Forward * Cam.Velocity;
+                <span class="Conditional">if</span> (glfwGetKey(Window, GLFW_KEY_A)) Cam.Position -= Cam.Right * Cam.Velocity;
+                <span class="Conditional">if</span> (glfwGetKey(Window, GLFW_KEY_D)) Cam.Position += Cam.Right * Cam.Velocity;
+                <span class="Conditional">if</span> (glfwGetKey(Window, GLFW_KEY_SPACE)) Cam.Position += Cam.Up * Cam.Velocity;
+                <span class="Conditional">if</span> (glfwGetKey(Window, GLFW_KEY_LEFT_SHIFT)) Cam.Position -= Cam.Up * Cam.Velocity;
+                <span class="Conditional">if</span> (glfwGetKey(Window, GLFW_KEY_V)&amp;&amp; ((CurrentTime - LastMouseRTime)) &gt;= <span class="Constant">1</span>) Cam.Velocity += <span class="Constant">0.15f</span>;
+                <span class="Conditional">if</span> (glfwGetKey(Window, GLFW_KEY_X)&amp;&amp; ((CurrentTime - LastMouseRTime)) &gt;= <span class="Constant">1</span>) Cam.Velocity -= <span class="Constant">0.15f</span>;
+
+                <span class="Conditional">if</span> (glfwGetKey(Window, GLFW_KEY_Y))
+                {
+                    printf(<span class="Constant">&quot;Right: &quot;</span>); DEBUGPrintVec3(Cam.Right); printf(<span class="Constant">&quot;</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+                    printf(<span class="Constant">&quot;Up: &quot;</span>); DEBUGPrintVec3(Cam.Up); printf(<span class="Constant">&quot;</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+                    printf(<span class="Constant">&quot;Forward: &quot;</span>); DEBUGPrintVec3(Cam.Forward); printf(<span class="Constant">&quot;</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+                    printf(<span class="Constant">&quot;Position: &quot;</span>); DEBUGPrintVec3(Cam.Position); printf(<span class="Constant">&quot;</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+                }
+
+                { <span class="Comment">// NOTE: Mouse look</span>
+                    Cam.Right = Normalize(Cross(Cam.Forward, WorldYAxis));
+                    Cam.Up = Normalize(Cross(Cam.Right, Cam.Forward));
+
+                    f64 MouseX, MouseY;
+                    glfwGetCursorPos(Window, &amp;MouseX, &amp;MouseY);
+
+                    <span class="Conditional">if</span> (GLFW_PRESS == glfwGetMouseButton(Window, GLFW_MOUSE_BUTTON_RIGHT) &amp;&amp; ((CurrentTime - LastMouseRTime)) &gt;= <span class="Constant">1</span>)
+                    {
+                        InsertVoxelAtMousePoint(MouseX, MouseY, Cam, WorldSvo);
+                        UpdateRenderScene(WorldSvo, RenderData);
+                        LastMouseRTime = CurrentTime;
+                    }
+
+                    <span class="Conditional">if</span> (GLFW_PRESS == glfwGetMouseButton(Window, GLFW_MOUSE_BUTTON_LEFT) &amp;&amp; ((CurrentTime - LastMouseLTime)) &gt;= <span class="Constant">1</span>)
+                    {
+                        DeleteVoxelAtMousePoint(MouseX, MouseY, Cam, WorldSvo);
+                        UpdateRenderScene(WorldSvo, RenderData);
+                        LastMouseLTime = CurrentTime;
+                    }
+
+                    <span class="StorageClass">const</span> f32 DX = <span class="Statement">static_cast</span>&lt;f32&gt;(MouseX - LastMouseX);
+                    <span class="StorageClass">const</span> f32 DY = <span class="Statement">static_cast</span>&lt;f32&gt;(MouseY - LastMouseY);
+
+                    LastMouseX = MouseX;
+                    LastMouseY = MouseY;
+
+                    Yaw = Rads(DX) * -<span class="Constant">0.05f</span>;
+                    Pitch = Rads(DY) * -<span class="Constant">0.05f</span>;
+
+                    quat YawRotation = RotationQuaternion(Yaw, WorldYAxis);
+                    quat PitchRotation = RotationQuaternion(Pitch, Cam.Right);
+
+                    Cam.Forward = Normalize(Rotate((YawRotation * PitchRotation), Cam.Forward));
+                }
+
+                f32 CameraMatrix[<span class="Constant">3</span>][<span class="Constant">3</span>] = {
+                    { Cam.Right.X, Cam.Right.Y, Cam.Right.Z },
+                    { Cam.Up.X, Cam.Up.Y, Cam.Up.Z },
+                    { -Cam.Forward.X, -Cam.Forward.Y, -Cam.Forward.Z },
+                };
+
+                f32 F[<span class="Constant">3</span>] = { Cam.Position.X, Cam.Position.Y, Cam.Position.Z };
+                ViewData.CamTransform = (f32*)CameraMatrix;
+                ViewData.CamPos = F;
+
+                GPUTime = DrawScene(RenderData, &amp;ViewData);
+            }
+
+
+        }
+
+        ImGui::Render();
+
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        glfwSwapBuffers(Window);
+        FrameEndTime = glfwGetTime();
+        DeltaTime = FrameEndTime - FrameStartTime;
+    }
+
+    printf(<span class="Constant">&quot;Deleting SVO</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+    DeleteScene(WorldSvo);
+    printf(<span class="Constant">&quot;Deleting Render Data</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+    DeleteRenderData(RenderData);
+
+    printf(<span class="Constant">&quot;Shutting down IMGUI</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+
+    printf(<span class="Constant">&quot;Shutting down GLFW</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+    glfwTerminate();
+    printf(<span class="Constant">&quot;Writing JSON trace</span><span class="Special">\n</span><span class="Constant">&quot;</span>);
+    <span class="Comment">//NP_WriteJSONTrace(&amp;Prof, nullptr, 0);</span>
+
+    free(EvtStorage);
+
+    DeleteShaderFiles(ShaderFiles);
+    <span class="Statement">return</span> <span class="Constant">EXIT_SUCCESS</span>;
+}
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

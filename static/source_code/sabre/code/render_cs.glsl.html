@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/render_cs.glsl.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="glsl">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Todo { color: #cf6b4c; }
+.Comment { color: #707070; }
+.Identifier { color: #99ad6a; }
+.Conditional { color: #ffcc33; }
+.Constant { color: #cf6b4c; }
+.PreProc { color: #ba9875; }
+.Function { color: #ba9875; }
+.Statement { color: #ffcc33; }
+.StorageClass { color: #ffcc33; }
+.Type { color: #ffcc33; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#version 450 core</span>
+
+<span class="Comment">// </span><span class="Todo">NOTE</span><span class="Comment">(Liam): Theoretical f32 ops we can do in 16ms on a 620M: 3840000000</span>
+<span class="PreProc">#define SVO_NODE_OCCUPIED_MASK  0x0000FF00U</span>
+<span class="PreProc">#define SVO_NODE_LEAF_MASK      0x000000FFU</span>
+<span class="PreProc">#define SVO_NODE_CHILD_PTR_MASK 0x7FFF0000U</span>
+<span class="PreProc">#define SVO_FAR_PTR_BIT_MASK    0x80000000U</span>
+
+
+<span class="PreProc">#define ASPECT_RATIO (1280.0/720.0)</span>
+
+<span class="PreProc">#define MAX_STEPS     512</span>
+<span class="PreProc">#define EMPTY_KEY     0xFFFFFFFFU</span>
+<span class="PreProc">#define F32_MAX       3.402823e+38f</span>
+<span class="PreProc">#define STEP_EPS      0.001765625f</span>
+<span class="PreProc">#define BACKGROUND_CR vec4(0.12, 0.12, 0.12, 1.0)</span>
+
+<span class="PreProc">#define HORZ_OR3(A)  ((A.x)|(A.y)|(A.z))</span>
+<span class="PreProc">#define HORZ_MIN3(A) min(min(A.x, A.y), A.z)</span>
+<span class="PreProc">#define HORZ_MAX3(A) max(max(A.x, A.y), A.z)</span>
+
+
+<span class="Structure">struct</span> <span class="Identifier">ray</span>
+{
+    <span class="Type">vec3</span> Origin;
+    <span class="Type">vec3</span> Dir;
+    <span class="Type">vec3</span> InvDir;
+};
+
+<span class="Structure">struct</span> <span class="Identifier">ray_intersection</span>
+{
+    <span class="Type">float</span> tMin;
+    <span class="Type">float</span> tMax;
+    <span class="Type">vec3</span>  tMaxV;
+    <span class="Type">vec3</span>  tMinV;
+};
+
+<span class="Structure">struct</span> <span class="Identifier">far_ptr</span>
+{
+    <span class="Type">uint</span> BlkIndex;
+    <span class="Type">uint</span> NodeOffset;
+};
+
+<span class="Structure">struct</span> <span class="Identifier">hmap_entry</span>
+{
+    <span class="Type">uint</span> Key;
+    <span class="Type">uint</span> PackedN;
+    <span class="Type">uint</span> PackedC;
+};
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">local_size_x</span> = <span class="Constant">8</span>, <span class="StorageClass">local_size_y</span> = <span class="Constant">8</span>) <span class="StorageClass">in</span>;
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">rgba8</span>, <span class="StorageClass">binding</span> = <span class="Constant">0</span>) <span class="StorageClass">writeonly</span> <span class="StorageClass">restrict</span> <span class="StorageClass">uniform</span> <span class="Type">image2D</span> OutputImgUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">r32f</span>, <span class="StorageClass">binding</span> = <span class="Constant">1</span>) <span class="StorageClass">restrict</span> <span class="StorageClass">uniform</span> <span class="Type">image2D</span> BeamImgUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">rgba32f</span>, <span class="StorageClass">binding</span> = <span class="Constant">2</span>) <span class="StorageClass">restrict</span> <span class="StorageClass">uniform</span> <span class="Type">image2D</span> TileImgUniform;
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">0</span>) <span class="StorageClass">uniform</span> <span class="Type">uint</span> MaxDepthUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">1</span>) <span class="StorageClass">uniform</span> <span class="Type">uint</span> BlockCountUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">2</span>) <span class="StorageClass">uniform</span> <span class="Type">uint</span> ScaleExpUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">3</span>) <span class="StorageClass">uniform</span> <span class="Type">uint</span> EntriesPerBlockUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">4</span>) <span class="StorageClass">uniform</span> <span class="Type">uint</span> FarPtrsPerBlockUniform;
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">5</span>) <span class="StorageClass">uniform</span> <span class="Type">uint</span> BiasUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">6</span>) <span class="StorageClass">uniform</span> <span class="Type">uint</span> TableSizeUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">7</span>) <span class="StorageClass">uniform</span> <span class="Type">float</span> InvBiasUniform;
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">8</span>) <span class="StorageClass">uniform</span> <span class="Type">vec3</span> ViewPosUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">9</span>) <span class="StorageClass">uniform</span> <span class="Type">mat3</span> ViewMatrixUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">10</span>) <span class="StorageClass">uniform</span> <span class="Type">bool</span> IsCoarsePassUniform;
+
+<span class="StorageClass">const</span> <span class="Type">uvec3</span> OCT_BITS = <span class="Type">uvec3</span>(<span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">4</span>);
+<span class="StorageClass">const</span> <span class="Type">vec3</span> OCT_BITS_F32 = <span class="Type">vec3</span>(<span class="Constant">1.0</span>, <span class="Constant">2.0</span>, <span class="Constant">4.0</span>);
+
+<span class="StorageClass">const</span> far_ptr NULL_FAR_PTR = {<span class="Constant">0</span>, <span class="Constant">0</span>};
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">std430</span>, <span class="StorageClass">binding</span> = <span class="Constant">3</span>) <span class="StorageClass">readonly</span> <span class="StorageClass">restrict</span> <span class="StorageClass">buffer</span> svo_input
+{
+    <span class="Type">uint</span> Nodes[];
+} SvoInputBuffer;
+
+<span class="StorageClass">layout</span>(<span class="StorageClass">std430</span>, <span class="StorageClass">binding</span>=<span class="Constant">5</span>) <span class="StorageClass">readonly</span> <span class="StorageClass">restrict</span> <span class="StorageClass">buffer</span> leaf_input
+{
+    hmap_entry Entries[];
+} LeafInputBuffer;
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">std430</span>, <span class="StorageClass">binding</span> = <span class="Constant">4</span>) <span class="StorageClass">readonly</span> <span class="StorageClass">restrict</span> <span class="StorageClass">buffer</span> svo_far_ptr_index
+{
+    far_ptr FarPtrs[];
+} SvoFarPtrBuffer;
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">std430</span>, <span class="StorageClass">binding</span> = <span class="Constant">6</span>) <span class="StorageClass">restrict</span> <span class="StorageClass">buffer</span> indirect_cmd
+{
+    <span class="Type">uint</span> GroupSizeX;
+    <span class="Type">uint</span> GroupSizeY;
+    <span class="Type">uint</span> GroupSizeZ;
+} IndirectCmdBuffer;
+
+<span class="Type">void</span> GetNodeChild(<span class="StorageClass">inout</span> <span class="Type">uvec2</span> NodeRef, <span class="StorageClass">in</span> <span class="Type">uint</span> Oct)
+{
+    <span class="Type">uvec2</span> Out;
+    <span class="Type">uint</span> ChildPtr = <span class="Function">bitfieldExtract</span>(NodeRef<span class="Identifier">.x</span>, <span class="Constant">16</span>, <span class="Constant">15</span>);
+    <span class="Type">uint</span> OccBits = <span class="Function">bitfieldExtract</span>(NodeRef<span class="Identifier">.x</span>, <span class="Constant">8</span>, <span class="Constant">8</span>);
+    <span class="Type">uint</span> LeafBits = <span class="Function">bitfieldExtract</span>(NodeRef<span class="Identifier">.x</span>, <span class="Constant">0</span>, <span class="Constant">8</span>);
+    <span class="Type">uint</span> OccupiedNonLeafOcts = OccBits &amp; (~LeafBits);
+    <span class="Type">uint</span> SetBitsBehindOctIdx = (<span class="Constant">1U</span> &lt;&lt; Oct) - <span class="Constant">1U</span>;
+
+    <span class="Type">uint</span> ChildOffset = <span class="Function">bitCount</span>(OccupiedNonLeafOcts &amp; SetBitsBehindOctIdx);
+    <span class="Type">bool</span> Far = <span class="Type">bool</span>(NodeRef<span class="Identifier">.x</span> &amp; SVO_FAR_PTR_BIT_MASK);
+
+    <span class="Type">uint</span> FarPtrIndex;
+    FarPtrIndex = (Far) ? (NodeRef<span class="Identifier">.y</span>*FarPtrsPerBlockUniform) + ChildPtr : FarPtrIndex;
+    far_ptr FarPtr = (Far) ? SvoFarPtrBuffer.FarPtrs[FarPtrIndex] : NULL_FAR_PTR;
+    NodeRef<span class="Identifier">.y</span> = (Far) ? (FarPtr.BlkIndex) : NodeRef<span class="Identifier">.y</span>;
+    <span class="Type">uint</span> NodeOffset = (Far) ? (FarPtr.NodeOffset) : ChildPtr;
+
+    <span class="Type">uint</span> ChildIndex = (NodeRef<span class="Identifier">.y</span>*EntriesPerBlockUniform) + NodeOffset + ChildOffset;
+    NodeRef<span class="Identifier">.y</span> += (NodeOffset + ChildOffset) &gt;&gt; <span class="Constant">14U</span>;
+    NodeRef<span class="Identifier">.x</span> = SvoInputBuffer.Nodes[ChildIndex];
+}
+
+ray_intersection RayBoxIntersection(<span class="StorageClass">in</span> ray R, <span class="StorageClass">in</span> <span class="Type">vec3</span> vMin, <span class="StorageClass">in</span> <span class="Type">vec3</span> vMax)
+{
+    <span class="Type">vec3</span> t0 = (vMin - R.Origin) * R.InvDir; <span class="Comment">// Distance along ray to vmin planes</span>
+    <span class="Type">vec3</span> t1 = (vMax - R.Origin) * R.InvDir; <span class="Comment">// Distance along ray to vmax planes</span>
+
+    <span class="Type">vec3</span> tMin = <span class="Function">min</span>(t0, t1); <span class="Comment">// Minimums of all distances</span>
+    <span class="Type">vec3</span> tMax = <span class="Function">max</span>(t0, t1); <span class="Comment">// Maximums of all distances</span>
+
+    <span class="Type">float</span> ttMin = HORZ_MAX3(tMin); <span class="Comment">// Max of min distances (closest to box)</span>
+    <span class="Type">float</span> ttMax = HORZ_MIN3(tMax); <span class="Comment">// Min of max distances (closest to box)</span>
+
+    ray_intersection Result = { ttMin, ttMax, tMax, tMin };
+    <span class="Statement">return</span> Result;
+}
+
+
+<span class="Type">bool</span> IsAdvanceValid(<span class="StorageClass">in</span> <span class="Type">uint</span> NewOct, <span class="StorageClass">in</span> <span class="Type">uint</span> OldOct, <span class="StorageClass">in</span> <span class="Type">vec3</span> RaySgn)
+{
+    <span class="Type">ivec3</span> NewOctBits = <span class="Type">ivec3</span>(NewOct) &amp; <span class="Type">ivec3</span>(OCT_BITS);
+    <span class="Type">ivec3</span> OldOctBits = <span class="Type">ivec3</span>(OldOct) &amp; <span class="Type">ivec3</span>(OCT_BITS);
+
+    <span class="Type">vec3</span> OctSgn = <span class="Function">sign</span>(NewOctBits - OldOctBits);
+
+    <span class="Statement">return</span> <span class="Function">any</span>(<span class="Function">equal</span>(RaySgn, OctSgn));
+}
+
+<span class="Type">bool</span> IsAdvanceValid2(<span class="StorageClass">in</span> <span class="Type">uint</span> NewOct, <span class="StorageClass">in</span> <span class="Type">uint</span> OldOct, <span class="StorageClass">in</span> <span class="Type">uint</span> RaySgnMsk)
+{
+    <span class="Conditional">if</span> (OldOct &gt; NewOct)
+    {
+        <span class="Type">ivec2</span> Tmp = <span class="Type">ivec2</span>(NewOct, OldOct);
+        NewOct = Tmp<span class="Identifier">.y</span>;
+        OldOct = Tmp<span class="Identifier">.x</span>;
+        RaySgnMsk ^= <span class="Constant">7</span>;
+    }
+
+    <span class="Statement">return</span> ((NewOct - OldOct) &amp; RaySgnMsk) != <span class="Constant">0</span>;
+}
+
+
+<span class="Type">uint</span> GetNextOctant(<span class="StorageClass">in</span> <span class="Type">float</span> tMax, <span class="StorageClass">in</span> <span class="Type">vec3</span> tValues, <span class="StorageClass">in</span> <span class="Type">uint</span> CurrentOct)
+{
+    <span class="Comment">// For every element of tValues that is equal to tMax, XOR the corresponding</span>
+    <span class="Comment">// bit in CurrentOct.</span>
+    <span class="Comment">// if tMax &gt;= tValues.x then NextOct ^= 1;</span>
+    <span class="Comment">// if tMax &gt;= tValues.y then NextOct ^= 2;</span>
+    <span class="Comment">// if tMax &gt;= tValues.z then NextOct ^= 4;</span>
+    <span class="Type">uvec3</span> XorMsk3 = <span class="Type">ivec3</span>(<span class="Function">greaterThanEqual</span>(<span class="Type">vec3</span>(tMax), tValues)) * OCT_BITS;
+    <span class="Type">uint</span> XorMsk = XorMsk3<span class="Identifier">.x</span> + XorMsk3<span class="Identifier">.y</span> + XorMsk3<span class="Identifier">.z</span>;
+    <span class="Statement">return</span> CurrentOct ^ XorMsk;
+}
+
+<span class="Type">uint</span> GetOctant(<span class="StorageClass">in</span> <span class="Type">vec3</span> P, <span class="StorageClass">in</span> <span class="Type">vec3</span> ParentCentreP)
+{
+    <span class="Type">uvec3</span> G = <span class="Function">mix</span>(<span class="Type">uvec3</span>(<span class="Constant">0</span>), OCT_BITS, <span class="Function">greaterThan</span>(P, ParentCentreP));
+    <span class="Statement">return</span> HORZ_OR3(G);
+}
+
+<span class="Type">vec3</span> Oct2Cr(<span class="StorageClass">in</span> <span class="Type">uint</span> Oct)
+{
+    <span class="Statement">return</span> <span class="Type">vec3</span>(<span class="Type">bvec3</span>(<span class="Type">uvec3</span>(Oct) &amp; <span class="Type">uvec3</span>(<span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">4</span>)))<span class="Identifier">.bgr</span>;
+}
+
+<span class="Structure">struct</span> <span class="Identifier">st_frame</span>
+{
+<span class="Comment">// x node, y blkindex</span>
+    <span class="Type">uvec2</span> NodeRef;
+    <span class="Type">vec3</span> ParentCentre;
+};
+
+
+<span class="Comment">// </span><span class="Todo">NOTE</span><span class="Comment">(Liam): Lessons learned in GPU optimisation:</span>
+<span class="Comment">// * Functions are (mostly) fine. The compiler inlines nearly everything</span>
+<span class="Comment">// * Even very trivial ifs can cause bad asm. Nearly always worth optimising these out</span>
+<span class="Comment">// * Swizzling is free in h.w.</span>
+<span class="Comment">// * Integer/float conversions aren't free</span>
+<span class="Comment">// * It appears we can only do 32-bit loads/stores, so this means that for an 8-byte structure</span>
+<span class="Comment">//   we need two corresponding movs, etc.</span>
+<span class="Comment">// * No h.w. instruction for `sign` - deceptively slow, especially with conversions</span>
+<span class="Comment">// * Vector min/max map directly to asm instructions</span>
+
+
+<span class="Type">uint</span> HashVec3(<span class="Type">uvec3</span> V)
+{
+    V *= <span class="Type">uvec3</span>(<span class="Constant">73856093</span>, <span class="Constant">19349663</span>, <span class="Constant">83492791</span>);
+    <span class="Statement">return</span> V<span class="Identifier">.x</span> ^ V<span class="Identifier">.y</span> ^ V<span class="Identifier">.z</span>;
+}
+
+
+<span class="Type">uvec4</span> ComputeHashes(<span class="Type">uint</span> Key)
+{
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> SizeMod = <span class="Type">uvec4</span>((TableSizeUniform - <span class="Constant">1</span>) &gt;&gt; <span class="Constant">2</span>);
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> SlotOffsets = (<span class="Type">uvec4</span>((TableSizeUniform - <span class="Constant">1</span>) &gt;&gt; <span class="Constant">2</span>) * <span class="Type">uvec4</span>(<span class="Constant">0</span>, <span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">3</span>));
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> S0 = <span class="Type">uvec4</span>(<span class="Constant">16</span>, <span class="Constant">18</span>, <span class="Constant">17</span>, <span class="Constant">16</span>);
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> S1 = <span class="Type">uvec4</span>(<span class="Constant">15</span>, <span class="Constant">16</span>, <span class="Constant">15</span>, <span class="Constant">16</span>);
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> S2 = <span class="Type">uvec4</span>(<span class="Constant">16</span>, <span class="Constant">17</span>, <span class="Constant">16</span>, <span class="Constant">15</span>);
+
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> C0 = <span class="Type">uvec4</span>(<span class="Constant">0x7feb352d</span>, <span class="Constant">0xa136aaad</span>, <span class="Constant">0x24f4d2cd</span>, <span class="Constant">0xe2d0d4cb</span>);
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> C1 = <span class="Type">uvec4</span>(<span class="Constant">0x846ca68b</span>, <span class="Constant">0x9f6d62d7</span>, <span class="Constant">0x1ba3b969</span>, <span class="Constant">0x3c6ad939</span>);
+
+    <span class="Type">uvec4</span> K = <span class="Type">uvec4</span>(Key);
+    K ^= K &gt;&gt; S0;
+    K *= C0;
+    K ^= K &gt;&gt; S1;
+    K *= C1;
+    K ^= K &gt;&gt; S2;
+    <span class="Statement">return</span> K % (TableSizeUniform - <span class="Constant">1</span>);
+    <span class="Comment">//return (K % SizeMod) + SlotOffsets;</span>
+}
+
+<span class="Type">void</span> LookupLeafVoxelData(<span class="Type">uvec3</span> Pos, <span class="StorageClass">out</span> <span class="Type">vec3</span> N, <span class="StorageClass">out</span> <span class="Type">vec3</span> C)
+{
+    <span class="Type">uint</span> Key = HashVec3(Pos);
+    <span class="Type">uvec4</span> Hashes = ComputeHashes(Key);
+
+    <span class="Conditional">if</span> (LeafInputBuffer.Entries[Hashes<span class="Identifier">.x</span>].Key == Key)
+    {
+        N = <span class="Function">unpackSnorm4x8</span>(LeafInputBuffer.Entries[Hashes<span class="Identifier">.x</span>].PackedN)<span class="Identifier">.xyz</span>;
+        C = <span class="Function">unpackSnorm4x8</span>(LeafInputBuffer.Entries[Hashes<span class="Identifier">.x</span>].PackedC)<span class="Identifier">.xyz</span>;
+    }
+    <span class="Conditional">else</span> <span class="Conditional">if</span> (LeafInputBuffer.Entries[Hashes<span class="Identifier">.y</span>].Key == Key)
+    {
+        N = <span class="Function">unpackSnorm4x8</span>(LeafInputBuffer.Entries[Hashes<span class="Identifier">.y</span>].PackedN)<span class="Identifier">.xyz</span>;
+        C = <span class="Function">unpackSnorm4x8</span>(LeafInputBuffer.Entries[Hashes<span class="Identifier">.y</span>].PackedC)<span class="Identifier">.xyz</span>;
+    }
+    <span class="Conditional">else</span> <span class="Conditional">if</span> (LeafInputBuffer.Entries[Hashes<span class="Identifier">.z</span>].Key == Key)
+    {
+        N = <span class="Function">unpackSnorm4x8</span>(LeafInputBuffer.Entries[Hashes<span class="Identifier">.z</span>].PackedN)<span class="Identifier">.xyz</span>;
+        C = <span class="Function">unpackSnorm4x8</span>(LeafInputBuffer.Entries[Hashes<span class="Identifier">.z</span>].PackedC)<span class="Identifier">.xyz</span>;
+    }
+    <span class="Conditional">else</span> <span class="Conditional">if</span> (LeafInputBuffer.Entries[Hashes<span class="Identifier">.w</span>].Key == Key)
+    {
+        N = <span class="Function">unpackSnorm4x8</span>(LeafInputBuffer.Entries[Hashes<span class="Identifier">.w</span>].PackedN)<span class="Identifier">.xyz</span>;
+        C = <span class="Function">unpackSnorm4x8</span>(LeafInputBuffer.Entries[Hashes<span class="Identifier">.w</span>].PackedC)<span class="Identifier">.xyz</span>;
+    }
+    <span class="Conditional">else</span>
+    {
+        N = <span class="Type">vec3</span>(<span class="Constant">1</span>, <span class="Constant">1</span>, <span class="Constant">1</span>);
+        C = <span class="Type">vec3</span>(<span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">1</span>);
+    }
+}
+
+
+<span class="Type">vec4</span> Raycast(<span class="StorageClass">in</span> ray R, <span class="StorageClass">in</span> <span class="Type">bool</span> IsRay, <span class="StorageClass">in</span> <span class="Type">ivec2</span> BeamXY)
+{
+    <span class="Type">vec4</span> Result;
+    <span class="Comment">// Scale up by the tree bias.</span>
+    <span class="Type">uint</span> Scale = (<span class="Constant">1</span> &lt;&lt; ScaleExpUniform) &lt;&lt; BiasUniform;
+    <span class="StorageClass">const</span> <span class="Type">float</span> BiasScale = (<span class="Constant">1.0</span> / InvBiasUniform);
+    <span class="StorageClass">const</span> <span class="Type">uint</span> StopDepth = MaxDepthUniform - <span class="Constant">1</span>;
+
+    <span class="Type">vec3</span> RootMin = <span class="Type">vec3</span>(<span class="Constant">0</span>);
+    <span class="Type">vec3</span> RootMax = <span class="Type">vec3</span>(Scale) * InvBiasUniform;
+    <span class="Type">vec3</span> RaySgn = <span class="Function">sign</span>(R.Dir);
+    <span class="StorageClass">const</span> <span class="Type">uint</span> C0 = ScaleExpUniform + BiasUniform;
+
+    <span class="Comment">// Intersection of the ray with the root cube (i.e. entire tree)</span>
+    ray_intersection RaySpan = RayBoxIntersection(R, RootMin, RootMax);
+
+    <span class="Type">uint</span> CurrentOct;
+    <span class="Type">uint</span> CurrentDepth;
+
+    <span class="Comment">// Check if the ray is within the octree at all</span>
+    <span class="Conditional">if</span> (RaySpan.tMin &lt;= RaySpan.tMax &amp;&amp; RaySpan.tMax &gt; <span class="Constant">0</span>)
+    {
+        <span class="Comment">// Ray enters octree --- begin processing</span>
+
+        <span class="Type">vec3</span> RayP = (RaySpan.tMin &gt;= <span class="Constant">0.0</span>) ? R.Origin + (RaySpan.tMin * R.Dir) : R.Origin;
+
+        <span class="Conditional">if</span> (IsRay)
+        {
+            <span class="StorageClass">const</span> <span class="Type">ivec2</span> Off = <span class="Type">ivec2</span>(<span class="Constant">0</span>, <span class="Constant">1</span>);
+
+            <span class="Type">float</span> MinDst = <span class="Function">min</span>(<span class="Function">min</span>(
+                    <span class="Function">imageLoad</span>(BeamImgUniform, BeamXY + Off<span class="Identifier">.xx</span>)<span class="Identifier">.x</span>,
+                    <span class="Function">imageLoad</span>(BeamImgUniform, BeamXY + Off<span class="Identifier">.yx</span>)<span class="Identifier">.x</span>),
+                    <span class="Function">min</span>(<span class="Function">imageLoad</span>(BeamImgUniform, BeamXY + Off<span class="Identifier">.xy</span>)<span class="Identifier">.x</span>,
+                    <span class="Function">imageLoad</span>(BeamImgUniform, BeamXY + Off<span class="Identifier">.yy</span>)<span class="Identifier">.x</span>)
+                    );
+
+            <span class="Comment">// Clamp MinDst to the scene dimensions</span>
+            MinDst = <span class="Function">max</span>(MinDst, RaySpan.tMin);
+
+            RayP = R.Origin + MinDst*R.Dir;
+        }
+
+        <span class="Type">vec3</span> ParentCentre = <span class="Type">vec3</span>(Scale &gt;&gt; <span class="Constant">1U</span>);
+
+        <span class="Comment">// Current octant the ray is in (confirmed good)</span>
+        CurrentOct = GetOctant(RayP, ParentCentre*InvBiasUniform);
+
+        <span class="Type">uvec2</span> ParentRef = <span class="Type">uvec2</span>(SvoInputBuffer.Nodes[<span class="Constant">0</span>], <span class="Constant">0</span>);
+
+        <span class="Comment">// Initialise depth to 1</span>
+        CurrentDepth = <span class="Constant">1</span>;
+
+        <span class="Comment">// Stack of previous voxels</span>
+        st_frame Stack[<span class="Constant">17</span>];
+
+        <span class="Comment">// Drop down one scale value to the initial children of the</span>
+        <span class="Comment">// root node.</span>
+        Scale &gt;&gt;= <span class="Constant">1U</span>;
+
+        Stack[CurrentDepth] = st_frame(ParentRef, ParentCentre);
+
+        <span class="Comment">// Begin stepping along the ray</span>
+        <span class="Statement">for</span> (<span class="Type">int</span> Step = <span class="Constant">0</span>; Step &lt; MAX_STEPS; ++Step)
+        {
+            <span class="Comment">// Radius of the current octant's cube (half the current scale);</span>
+            <span class="Type">float</span> Rad = <span class="Type">float</span>(Scale &gt;&gt; <span class="Constant">1U</span>);
+
+            <span class="Comment">// Get the centre position of this octant</span>
+            <span class="Type">vec3</span> OctSgn = <span class="Function">mix</span>(<span class="Type">vec3</span>(-<span class="Constant">1</span>), <span class="Type">vec3</span>(<span class="Constant">1</span>), <span class="Type">bvec3</span>(CurrentOct &amp; OCT_BITS));
+            Result<span class="Identifier">.xyz</span> = ParentCentre + (OctSgn * Rad);
+
+            <span class="Type">vec3</span> NodeMin = (Result<span class="Identifier">.xyz</span> - Rad) * InvBiasUniform;
+            <span class="Type">vec3</span> NodeMax = (Result<span class="Identifier">.xyz</span> + Rad) * InvBiasUniform;
+
+            RaySpan = RayBoxIntersection(R, NodeMin, NodeMax);
+
+            <span class="Conditional">if</span> (RaySpan.tMin &lt;= RaySpan.tMax)
+            {
+                <span class="Comment">// Ray hit this voxel</span>
+                <span class="Type">uint</span> ChildMsk = ParentRef<span class="Identifier">.x</span> &lt;&lt; (CurrentOct ^ <span class="Constant">7</span>);
+                <span class="Comment">// Check if voxel occupied</span>
+                <span class="Conditional">if</span> ((ChildMsk &amp; <span class="Constant">0x8000U</span>) != <span class="Constant">0U</span>)
+                {
+                    <span class="Comment">// Octant is occupied, check if leaf</span>
+                    <span class="Conditional">if</span> (CurrentDepth == StopDepth)
+                    {
+                        Result<span class="Identifier">.w</span> = RaySpan.tMin;
+                        <span class="Statement">return</span> Result;
+                    }
+                    <span class="Conditional">else</span>
+                    {
+                        <span class="Comment">// Voxel has children --- execute push</span>
+                        <span class="Comment">// </span><span class="Todo">NOTE</span><span class="Comment">(Liam): BlkIndex (potentially) updated here</span>
+
+                        Stack[CurrentDepth] = st_frame(ParentRef, ParentCentre);
+
+                        GetNodeChild(ParentRef, CurrentOct);
+                        CurrentOct = GetOctant(RayP, Result<span class="Identifier">.xyz</span>*InvBiasUniform);
+                        ParentCentre = Result<span class="Identifier">.xyz</span>;
+                        Scale &gt;&gt;= <span class="Constant">1</span>;
+                        ++CurrentDepth;
+
+                        <span class="Statement">continue</span>;
+                    }
+                }
+
+                <span class="Comment">// Octant not occupied, need to handle advance/pop</span>
+                <span class="Type">uint</span> NextOct = GetNextOctant(RaySpan.tMax, RaySpan.tMaxV, CurrentOct);
+                RayP = R.Origin + (RaySpan.tMax + STEP_EPS) * R.Dir;
+
+                <span class="Conditional">if</span> (IsAdvanceValid(NextOct, CurrentOct, RaySgn))
+                {
+                    CurrentOct = NextOct;
+                }
+                <span class="Conditional">else</span>
+                {
+                    <span class="Comment">// Determined that NodeCentre is never &lt; 0</span>
+                    <span class="Type">uvec3</span> NodeCentreBits = <span class="Type">uvec3</span>(Result<span class="Identifier">.xyz</span>);
+                    <span class="Type">uvec3</span> RayPBits = <span class="Type">uvec3</span>(RayP * BiasScale);
+
+                    <span class="Comment">// </span><span class="Todo">NOTE</span><span class="Comment">(Liam): It is **okay** to have negative values here</span>
+                    <span class="Comment">// because the HDB will end up being equal to ScaleExp.</span>
+                    <span class="Comment">//</span>
+                    <span class="Comment">// Find the highest differing bit</span>
+                    <span class="Type">uvec3</span> HDB = <span class="Function">findMSB</span>(NodeCentreBits ^ RayPBits);
+
+                    <span class="Type">uint</span> M = HORZ_MAX3(<span class="Function">mix</span>(<span class="Type">uvec3</span>(<span class="Constant">0</span>), HDB, <span class="Function">lessThan</span>(HDB, <span class="Type">uvec3</span>(C0))));
+
+                    <span class="Type">uint</span> NextDepth = (C0 - M);
+
+                    <span class="Conditional">if</span> (NextDepth &lt; CurrentDepth)
+                    {
+                        CurrentDepth = NextDepth;
+                        Scale = <span class="Constant">1U</span> &lt;&lt; M;
+                        ParentCentre = Stack[CurrentDepth].ParentCentre;
+                        ParentRef = Stack[CurrentDepth].NodeRef;
+                        CurrentOct = GetOctant(RayP, ParentCentre*InvBiasUniform);
+                    }
+                    <span class="Conditional">else</span>
+                    {
+                        Result<span class="Identifier">.w</span> = F32_MAX;
+                        <span class="Statement">return</span> Result;
+                    }
+                }
+            }
+            <span class="Conditional">else</span>
+            {
+                Result<span class="Identifier">.w</span> = F32_MAX;
+                <span class="Statement">return</span> Result;
+            }
+        }
+    }
+
+    Result<span class="Identifier">.w</span> = F32_MAX;
+    <span class="Statement">return</span> Result;
+}
+
+
+<span class="PreProc">#define COT_30DEG 1.73205080</span>
+<span class="Type">void</span> main()
+{
+    <span class="Type">ivec2</span> PixelCoords = <span class="Type">ivec2</span>(<span class="Identifier">gl_GlobalInvocationID</span><span class="Identifier">.xy</span>);
+    <span class="Conditional">if</span> (IsCoarsePassUniform)
+    {
+        PixelCoords &lt;&lt;= <span class="Constant">3</span>;
+    }
+    <span class="Type">vec3</span> ScreenCoords = <span class="Type">vec3</span>(<span class="Constant">512</span>, <span class="Constant">384</span>, <span class="Constant">1024</span>);
+
+    <span class="Type">vec3</span> ScreenOrigin = ViewPosUniform - ScreenCoords;
+    <span class="Type">vec3</span> ScreenCoord = ScreenOrigin + <span class="Type">vec3</span>(PixelCoords<span class="Identifier">.xy</span>, <span class="Constant">0</span>);
+    ScreenCoord<span class="Identifier">.x</span> *= <span class="Constant">1024.0</span>/<span class="Constant">768.0</span>;
+
+    <span class="Type">vec3</span> RayP = ViewPosUniform;
+    <span class="Type">vec3</span> RayD = <span class="Function">normalize</span>(ScreenCoord - ViewPosUniform);
+    RayD *= ViewMatrixUniform;
+
+    <span class="Type">vec3</span> HitP;
+    ray R = { RayP, RayD, <span class="Constant">1.0</span> / RayD };
+
+    <span class="Comment">// Branch is fine here because all pixels will take the branch.</span>
+    <span class="Conditional">if</span> (IsCoarsePassUniform)
+    {
+        <span class="Type">vec4</span> MinDst = Raycast(R, <span class="Constant">false</span>, <span class="Type">ivec2</span>(<span class="Constant">0</span>));
+        <span class="Function">imageStore</span>(BeamImgUniform, PixelCoords &gt;&gt; <span class="Constant">3U</span>, MinDst<span class="Identifier">.wzyx</span>);
+    }
+    <span class="Conditional">else</span>
+    {
+        <span class="Type">vec3</span> N = <span class="Type">vec3</span>(<span class="Constant">0</span>);
+        <span class="Type">vec3</span> Ldir = <span class="Type">vec3</span>(<span class="Constant">0</span>);
+        <span class="Type">vec3</span> C = <span class="Type">vec3</span>(<span class="Constant">0</span>);
+
+        <span class="Type">vec4</span> Dst = Raycast(R, <span class="Constant">true</span>, PixelCoords &gt;&gt; <span class="Constant">3U</span>);
+        <span class="Conditional">if</span> (Dst<span class="Identifier">.w</span> != F32_MAX)
+        {
+            Ldir = <span class="Function">normalize</span>((Dst<span class="Identifier">.xyz</span>*InvBiasUniform) - <span class="Type">vec3</span>(ViewPosUniform));
+            LookupLeafVoxelData(<span class="Type">uvec3</span>(Dst<span class="Identifier">.xyz</span>), N, C);
+            <span class="Type">vec4</span> OutCr = <span class="Type">vec4</span>(<span class="Constant">0</span>);
+            <span class="Conditional">if</span> (C != <span class="Type">vec3</span>(<span class="Constant">1</span>, <span class="Constant">0</span>, <span class="Constant">1</span>))
+            {
+                OutCr<span class="Identifier">.rgb</span> = <span class="Function">max</span>(<span class="Type">vec3</span>(<span class="Function">dot</span>(Ldir, N)), <span class="Type">vec3</span>(<span class="Constant">0.25</span>))*C;
+                OutCr<span class="Identifier">.a</span> = <span class="Constant">1.0</span>;
+            }
+            <span class="Function">imageStore</span>(OutputImgUniform, PixelCoords, OutCr);
+        }
+        <span class="Conditional">else</span>
+        {
+            <span class="Function">imageStore</span>(OutputImgUniform, PixelCoords, BACKGROUND_CR);
+        }
+    }
+}
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

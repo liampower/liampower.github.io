@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/svo.hh.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="cpp">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Constant { color: #cf6b4c; }
+.Special { color: #ba9875; }
+.Statement { color: #ffcc33; }
+.PreProc { color: #ba9875; }
+.Operator { color: #ba9875; }
+.Comment { color: #707070; }
+.StorageClass { color: #ffcc33; }
+.Type { color: #ffcc33; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#ifndef SABRE_SVO_H</span>
+<span class="PreProc">#define SABRE_SVO_H</span>
+
+<span class="PreProc">#include </span><span class="Constant">&lt;vector&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;stdio.h&gt;</span>
+
+<span class="PreProc">#include </span><span class="Constant">&quot;sabre.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;vecmath.hh&quot;</span>
+
+<span class="Statement">using</span> packed_snorm3 = u32;
+
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u32 SBR_NODES_PER_BLK = <span class="Constant">16384</span>;
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> u32 SBR_FAR_PTRS_PER_BLK = <span class="Constant">16384</span>;
+
+<span class="Operator">static_assert</span>(SBR_FAR_PTRS_PER_BLK &gt;= SBR_NODES_PER_BLK,
+              <span class="Constant">&quot;Far Ptrs Per Blk must be &gt;= Entries per Blk&quot;</span>);
+
+
+<span class="Structure">struct</span> svo_block;
+<span class="Structure">struct</span> svo;
+
+<span class="Structure">typedef</span> vm::vec3 (*data_sampler_fn)(vm::vec3, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span>, <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span>);
+<span class="Structure">typedef</span> <span class="Type">bool</span> (*shape_sampler_fn)(vm::vec3, vm::vec3, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span>, <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span>);
+
+<span class="Structure">struct</span> shape_sampler
+{
+    <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span> UserData;
+    <span class="StorageClass">const</span> shape_sampler_fn SamplerFn;
+};
+
+<span class="Structure">struct</span> data_sampler
+{
+    <span class="StorageClass">const</span> <span class="Type">void</span>* <span class="StorageClass">const</span> UserData;
+    <span class="StorageClass">const</span> data_sampler_fn SamplerFn;
+};
+
+<span class="Structure">enum</span> sbr_surface
+{
+    SURFACE_INTERSECTED,
+    SURFACE_INSIDE,
+    SURFACE_OUTSIDE
+};
+
+<span class="Structure">struct</span> far_ptr
+{
+    <span class="Comment">// Index of the child node's block</span>
+    u32 BlkIndex;
+
+    <span class="Comment">// Which slot in the child block the </span>
+    <span class="Comment">// particular child node resides at</span>
+    u32 NodeOffset;
+};
+
+<span class="Structure">struct</span> attrib_data
+{
+    u32 VoxelKey;
+    packed_snorm3 PackedNormal;
+    packed_snorm3 PackedColour;
+
+    <span class="Comment">// Annoying, but we need the attrib data to have a constructor for emplace_back</span>
+    <span class="StorageClass">constexpr</span> <span class="Type">inline</span> attrib_data(u32 K, packed_snorm3 PN, packed_snorm3 PC) : VoxelKey(K), PackedNormal(PN), PackedColour(PC) {}
+};
+
+<span class="Structure">enum</span> svo_blk_flags
+{
+    SVO_BLK_LEAKY = <span class="Constant">0x000001</span>
+};
+
+<span class="Structure">union</span> <span class="StorageClass">alignas</span>(<span class="Constant">4</span>) svo_node
+{
+    <span class="Structure">struct</span>
+    {
+        u8  LeafMask;
+        u8  OccupiedMask;
+        u16 ChildPtr;
+    };
+
+    u32 Packed;
+};
+
+
+<span class="Structure">struct</span> svo_bias
+{
+    f32 InvScale;
+    u32 Scale;
+};
+
+
+<span class="Structure">typedef</span> <span class="Structure">struct</span> svo_block
+{
+    usize       NextFreeSlot;
+    usize       NextFarPtrSlot;
+    u32         Index;
+    svo_block*  Prev;
+    svo_block*  Next;
+    svo_node    Entries[SBR_NODES_PER_BLK];
+    far_ptr     FarPtrs[SBR_FAR_PTRS_PER_BLK];
+} packed_data svo_block;
+
+<span class="Structure">struct</span> svo
+{
+    <span class="Comment">// How many total blocks are used in the tree.</span>
+    u32 UsedBlockCount;
+
+    <span class="Comment">// The maximum depth of the svo to traverse</span>
+    u32 MaxDepth;
+
+    <span class="Comment">// Extant of the octree in world space.</span>
+    u32 ScaleExponent;
+
+    <span class="Comment">// Required to maintain subtree-scale values as</span>
+    <span class="Comment">// integers. </span>
+    <span class="Comment">//</span>
+    <span class="Comment">// In the case that MaxDepth &gt;= ScaleExponent, the</span>
+    <span class="Comment">// scale values of the subtrees will become fractional</span>
+    <span class="Comment">// values. This scale factor must first be applied to</span>
+    <span class="Comment">// the entire tree scale so that the smallest extant</span>
+    <span class="Comment">// of any child region is 1. Remember to divide by this</span>
+    <span class="Comment">// value when doing any space-operations!</span>
+    svo_bias Bias;
+
+    <span class="Comment">// Last block of nodes in this tree</span>
+    <span class="Comment">// NOTE(Liam): Warning! This field is volatile and unsafe</span>
+    <span class="Comment">// to use; it is frequently modified by the implementation</span>
+    <span class="Comment">// and probably not a good way to achieve much of anything</span>
+    <span class="Comment">// besides tree construction!</span>
+    svo_block* LastBlock;
+
+    <span class="Comment">// First block of nodes in this tree</span>
+    svo_block* RootBlock;
+
+
+    std::vector&lt;attrib_data&gt; AttribData;
+};
+
+<span class="StorageClass">extern</span> vm::vec3
+GetNearestFreeSlot(vm::vec3 RayOrigin, vm::vec3 Dir, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Tree);
+
+<span class="StorageClass">extern</span> vm::vec3
+GetNearestLeafSlot(vm::vec3 RayOrigin, vm::vec3 Dir, <span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Tree);
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">void</span>
+InsertVoxel(svo* Tree, vm::vec3 P);
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">void</span>
+DeleteVoxel(svo* Tree, vm::vec3 P);
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> svo_bias
+ComputeScaleBias(u32 MaxDepth, u32 ScaleExponent);
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">void</span>
+DeleteScene(svo* Tree);
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> svo*
+ImportGLBFile(u32 MaxDepth, <span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> GLBPath);
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> svo*
+CreateScene(u32 ScaleExp,
+            u32 MaxDepth,
+            shape_sampler* SurfaceFn,
+            data_sampler* NormalFn,
+            data_sampler* ColourFn);
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">void</span>
+OutputSvoToFile(<span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Svo, <span class="Type">FILE</span>* FileOut);
+
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">unsigned</span> <span class="Type">int</span>
+GetSvoUsedBlockCount(<span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Svo);
+
+<span class="StorageClass">extern</span> <span class="Constant">&quot;C&quot;</span> <span class="Type">unsigned</span> <span class="Type">int</span>
+GetSvoDepth(<span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Svo);
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+DEBUGPrintVec3(vm::vec3 V)
+{
+    printf(<span class="Constant">&quot;(</span><span class="Special">%f</span><span class="Constant">, </span><span class="Special">%f</span><span class="Constant">, </span><span class="Special">%f</span><span class="Constant">)</span><span class="Special">\n</span><span class="Constant">&quot;</span>, (f64)V.X, (f64)V.Y, (f64)V.Z);
+}
+
+<span class="PreProc">#endif</span>
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

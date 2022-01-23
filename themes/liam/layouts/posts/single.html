@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+{{ partial "head" . }}
+<body>
+    <header>
+        {{ partial "_menu" }}
+    </header>
+    <main role="main">
+        <article>
+            <header>
+                <h1>{{ .Title }}</h1>
+                <p title="{{ .Date }}" >{{ .Date.Format "Jan 02 2006" }}</p>
+            </header>
+            <section class="toc">
+                {{ .TableOfContents }}
+            </section>
+            {{ .Content }}
+        </article>
+        <footer>
+            <em>This blog doesn't have comments, but you can always
+            <a href="mailto:liamp@protonmail.ch">email</a> me with a comment or question!
+            </em>
+        </footer>
+    </main>
+</body>
+</html>

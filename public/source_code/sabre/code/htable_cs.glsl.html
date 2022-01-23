@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/htable_cs.glsl.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="glsl">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Constant { color: #cf6b4c; }
+.Identifier { color: #99ad6a; }
+.Conditional { color: #ffcc33; }
+.Statement { color: #ffcc33; }
+.PreProc { color: #ba9875; }
+.Function { color: #ba9875; }
+.Comment { color: #707070; }
+.StorageClass { color: #ffcc33; }
+.Type { color: #ffcc33; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#version 450 core</span>
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">local_size_x</span> = <span class="Constant">1</span>, <span class="StorageClass">local_size_y</span> = <span class="Constant">1</span>, <span class="StorageClass">local_size_z</span> = <span class="Constant">1</span>) <span class="StorageClass">in</span>;
+
+<span class="PreProc">#define EMPTY_KEY 0xFFFFFFFF</span>
+<span class="PreProc">#define MAX_STEPS 8192</span>
+
+<span class="Structure">struct</span> <span class="Identifier">entry</span>
+{
+    <span class="Type">uint</span> Key;
+    <span class="Type">uint</span> PackedNormal;
+    <span class="Type">uint</span> PackedColour;
+};
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">std430</span>, <span class="StorageClass">binding</span> = <span class="Constant">0</span>) <span class="StorageClass">restrict</span> <span class="StorageClass">buffer</span> htable_out
+{
+    entry Entries[];
+} HTableOutBuffer;
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">std430</span>, <span class="StorageClass">binding</span> = <span class="Constant">1</span>) <span class="StorageClass">readonly</span> <span class="StorageClass">restrict</span> <span class="StorageClass">buffer</span> data_in
+{
+    entry Entries[];
+} DataInputBuffer;
+
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">2</span>) <span class="StorageClass">uniform</span> <span class="Type">uint</span> TableSizeUniform;
+<span class="StorageClass">layout</span> (<span class="StorageClass">location</span> = <span class="Constant">3</span>) <span class="StorageClass">uniform</span> <span class="Type">uint</span> OffsetUniform;
+
+<span class="Type">uvec4</span> ComputeHashes(<span class="Type">uint</span> Key)
+{
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> SizeMod = <span class="Type">uvec4</span>((TableSizeUniform - <span class="Constant">1</span>) &gt;&gt; <span class="Constant">2</span>);
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> SlotOffsets = (<span class="Type">uvec4</span>((TableSizeUniform - <span class="Constant">1</span>) &gt;&gt; <span class="Constant">2</span>) * <span class="Type">uvec4</span>(<span class="Constant">0</span>, <span class="Constant">1</span>, <span class="Constant">2</span>, <span class="Constant">3</span>));
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> S0 = <span class="Type">uvec4</span>(<span class="Constant">16</span>, <span class="Constant">18</span>, <span class="Constant">17</span>, <span class="Constant">16</span>);
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> S1 = <span class="Type">uvec4</span>(<span class="Constant">15</span>, <span class="Constant">16</span>, <span class="Constant">15</span>, <span class="Constant">16</span>);
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> S2 = <span class="Type">uvec4</span>(<span class="Constant">16</span>, <span class="Constant">17</span>, <span class="Constant">16</span>, <span class="Constant">15</span>);
+
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> C0 = <span class="Type">uvec4</span>(<span class="Constant">0x7feb352d</span>, <span class="Constant">0xa136aaad</span>, <span class="Constant">0x24f4d2cd</span>, <span class="Constant">0xe2d0d4cb</span>);
+    <span class="StorageClass">const</span> <span class="Type">uvec4</span> C1 = <span class="Type">uvec4</span>(<span class="Constant">0x846ca68b</span>, <span class="Constant">0x9f6d62d7</span>, <span class="Constant">0x1ba3b969</span>, <span class="Constant">0x3c6ad939</span>);
+
+    <span class="Type">uvec4</span> K = <span class="Type">uvec4</span>(Key);
+    K ^= K &gt;&gt; S0;
+    K *= C0;
+    K ^= K &gt;&gt; S1;
+    K *= C1;
+    K ^= K &gt;&gt; S2;
+    <span class="Statement">return</span> K % (TableSizeUniform - <span class="Constant">1</span>);
+    <span class="Comment">//return (K % SizeMod) + SlotOffsets;</span>
+}
+
+<span class="Type">void</span> main()
+{
+    <span class="Type">uint</span> ThreadID = <span class="Identifier">gl_GlobalInvocationID</span><span class="Identifier">.x</span>;
+    entry InputPair = DataInputBuffer.Entries[OffsetUniform + ThreadID];
+
+    <span class="Type">uint</span> Slot = ComputeHashes(InputPair.Key)<span class="Identifier">.x</span>;
+
+    <span class="Type">int</span> Step;
+    <span class="Statement">for</span> (Step = <span class="Constant">0</span>; Step &lt; MAX_STEPS; ++Step)
+    {
+        InputPair.Key = <span class="Function">atomicExchange</span>(HTableOutBuffer.Entries[Slot].Key, InputPair.Key);
+        InputPair.PackedNormal = <span class="Function">atomicExchange</span>(HTableOutBuffer.Entries[Slot].PackedNormal, InputPair.PackedNormal);
+        InputPair.PackedColour = <span class="Function">atomicExchange</span>(HTableOutBuffer.Entries[Slot].PackedColour, InputPair.PackedColour);
+        <span class="Conditional">if</span> (EMPTY_KEY != InputPair.Key)
+        {
+            <span class="Type">uvec4</span> Hashes = ComputeHashes(InputPair.Key);
+
+            <span class="Conditional">if</span> (Slot == Hashes<span class="Identifier">.x</span>) Slot = Hashes<span class="Identifier">.y</span>;
+            <span class="Conditional">else</span> <span class="Conditional">if</span> (Slot == Hashes<span class="Identifier">.y</span>) Slot = Hashes<span class="Identifier">.z</span>;
+            <span class="Conditional">else</span> <span class="Conditional">if</span> (Slot == Hashes<span class="Identifier">.z</span>) Slot = Hashes<span class="Identifier">.w</span>;
+            <span class="Conditional">else</span> <span class="Conditional">if</span> (Slot == Hashes<span class="Identifier">.w</span>) Slot = Hashes<span class="Identifier">.x</span>;
+        }
+        <span class="Conditional">else</span>
+        {
+            <span class="Statement">break</span>;
+        }
+    }
+
+}
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

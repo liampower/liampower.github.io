@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+{{ partial "head" }}
+<body>
+    <header>
+        {{ partial "_menu" }}
+    </header>
+
+    <main>
+        <ol>
+            {{ range .Data.Pages }}
+                <li>
+                    <a href="{{ .Permalink }}">{{ .Name }} &middot; {{ .Date }}</a>
+                    <p>{{ .Summary }}</p>
+                </li>
+            {{ end }}
+        </ol>
+    </main>
+</body>
+</html>

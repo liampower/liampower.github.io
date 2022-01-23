@@ -1,0 +1,1507 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/vecmath.hh.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="cpp">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Operator { color: #ba9875; }
+.Constant { color: #cf6b4c; }
+.Conditional { color: #ffcc33; }
+.Statement { color: #ffcc33; }
+.PreProc { color: #ba9875; }
+.Type { color: #ffcc33; }
+.StorageClass { color: #ffcc33; }
+.Comment { color: #707070; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#ifndef VECMATH_H</span>
+<span class="PreProc">#define VECMATH_H</span>
+
+<span class="PreProc">#include </span><span class="Constant">&lt;cmath&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;cstdint&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;cfloat&gt;</span>
+
+<span class="Comment">// {{{ New Types</span>
+
+<span class="Comment">// Primitive typedefs aren't namespaced</span>
+<span class="Statement">using</span> uint  = <span class="Type">unsigned</span> <span class="Type">int</span>;
+<span class="Statement">using</span> usize = <span class="Type">size_t</span>;
+<span class="Statement">using</span> u8    = <span class="Type">uint8_t</span>;
+<span class="Statement">using</span> u16   = <span class="Type">uint16_t</span>;
+<span class="Statement">using</span> u32   = <span class="Type">uint32_t</span>;
+<span class="Statement">using</span> u64   = <span class="Type">uint64_t</span>;
+<span class="Statement">using</span> i8    = <span class="Type">int8_t</span>;
+<span class="Statement">using</span> i16   = <span class="Type">int16_t</span>;
+<span class="Statement">using</span> i32   = <span class="Type">int32_t</span>;
+<span class="Statement">using</span> i64   = <span class="Type">int64_t</span>;
+<span class="Statement">using</span> f32   = <span class="Type">float</span>;
+<span class="Statement">using</span> f64   = <span class="Type">double</span>;
+<span class="Statement">using</span> byte  = <span class="Type">unsigned</span> <span class="Type">char</span>;
+
+<span class="Comment">// }}}</span>
+
+<span class="Structure">namespace</span> vm
+{
+
+<span class="StorageClass">constexpr</span> <span class="Type">float</span> PI_32  = <span class="Constant">3.14159265f</span>;
+<span class="StorageClass">constexpr</span> <span class="Type">float</span> SQRT_2 = <span class="Constant">1.41421569f</span>;
+<span class="StorageClass">constexpr</span> <span class="Type">float</span> INV_SQRT_2 = <span class="Constant">0.70710678f</span>;
+<span class="StorageClass">constexpr</span> <span class="Type">float</span> EPSILON = <span class="Constant">FLT_EPSILON</span>;
+<span class="StorageClass">constexpr</span> <span class="Type">float</span> PI_OVER_180_DG = <span class="Constant">0.01745329f</span>;
+<span class="StorageClass">constexpr</span> <span class="Type">float</span> F32_MAX = <span class="Constant">FLT_MAX</span>;
+<span class="StorageClass">constexpr</span> <span class="Type">float</span> F32_MIN = <span class="Constant">FLT_MIN</span>;
+
+<span class="Comment">// {{{ Vectors</span>
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt;
+<span class="Structure">struct</span> gvec2
+{
+    c X, Y;
+
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec2() = <span class="Statement">default</span>;
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec2(c All) : X(All), Y(All) {}
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec2(c _X, c _Y) : X(_X), Y(_Y) {}
+
+    <span class="Structure">template</span>&lt;<span class="Structure">typename</span> conv&gt;
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec2(gvec2&lt;conv&gt; Other) : gvec2(<span class="Statement">static_cast</span>&lt;c&gt;(Other.X),
+                                                        <span class="Statement">static_cast</span>&lt;c&gt;(Other.Y)) {}
+
+    <span class="Structure">template</span>&lt;<span class="Structure">typename</span> conv&gt;
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec2(conv Other) : gvec2(<span class="Statement">static_cast</span>&lt;c&gt;(Other),
+                                                 <span class="Statement">static_cast</span>&lt;c&gt;(Other)) {}
+};
+
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt;
+<span class="Structure">struct</span> gvec3
+{
+    c X, Y, Z;
+
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec3() = <span class="Statement">default</span>;
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec3(c All) : X(All), Y(All), Z(All) {}
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec3(c _X, c _Y, c _Z) : X(_X), Y(_Y), Z(_Z) {}
+
+    <span class="Structure">template</span>&lt;<span class="Structure">typename</span> conv&gt;
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec3(gvec3&lt;conv&gt; Other) : gvec3(<span class="Statement">static_cast</span>&lt;c&gt;(Other.X),
+                                                        <span class="Statement">static_cast</span>&lt;c&gt;(Other.Y),
+                                                        <span class="Statement">static_cast</span>&lt;c&gt;(Other.Z)) {}
+    <span class="Structure">template</span>&lt;<span class="Structure">typename</span> conv&gt;
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec3(conv Other) : gvec3(<span class="Statement">static_cast</span>&lt;c&gt;(Other),
+                                                 <span class="Statement">static_cast</span>&lt;c&gt;(Other),
+                                                 <span class="Statement">static_cast</span>&lt;c&gt;(Other)) {}
+};
+
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt;
+<span class="Structure">struct</span> gvec4
+{
+    c X, Y, Z, W;
+
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec4() = <span class="Statement">default</span>;
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec4(c All) : X(All), Y(All), Z(All), W(All) {}
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec4(c _X, c _Y, c _Z, c _W) : X(_X), Y(_Y), Z(_Z), W(_W) {}
+
+    <span class="Structure">template</span>&lt;<span class="Structure">typename</span> conv&gt;
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec4(gvec2&lt;conv&gt; Other) : gvec4(<span class="Statement">static_cast</span>&lt;c&gt;(Other.X),
+                                                        <span class="Statement">static_cast</span>&lt;c&gt;(Other.Y),
+                                                        <span class="Statement">static_cast</span>&lt;c&gt;(Other.Z),
+                                                        <span class="Statement">static_cast</span>&lt;c&gt;(Other.W)) {}
+    <span class="Structure">template</span>&lt;<span class="Structure">typename</span> conv&gt;
+    <span class="StorageClass">constexpr</span> <span class="Type">explicit</span> gvec4(conv Other) : gvec4(<span class="Statement">static_cast</span>&lt;c&gt;(Other),
+                                                 <span class="Statement">static_cast</span>&lt;c&gt;(Other),
+                                                 <span class="Statement">static_cast</span>&lt;c&gt;(Other),
+                                                 <span class="Statement">static_cast</span>&lt;c&gt;(Other)) {}
+};
+
+<span class="Statement">using</span> vec2 = gvec2&lt;<span class="Type">float</span>&gt;;
+<span class="Statement">using</span> vec3 = gvec3&lt;<span class="Type">float</span>&gt;;
+<span class="Statement">using</span> vec4 = gvec4&lt;<span class="Type">float</span>&gt;;
+<span class="Statement">using</span> ivec2 = gvec2&lt;<span class="Type">int</span>&gt;;
+<span class="Statement">using</span> ivec3 = gvec3&lt;<span class="Type">int</span>&gt;;
+<span class="Statement">using</span> ivec4 = gvec4&lt;<span class="Type">int</span>&gt;;
+
+<span class="Statement">using</span> uvec2 = gvec2&lt;<span class="Type">unsigned</span> <span class="Type">int</span>&gt;;
+<span class="Statement">using</span> uvec3 = gvec3&lt;<span class="Type">unsigned</span> <span class="Type">int</span>&gt;;
+<span class="Statement">using</span> uvec4 = gvec4&lt;<span class="Type">unsigned</span> <span class="Type">int</span>&gt;;
+
+<span class="Statement">using</span> bvec2 = gvec2&lt;<span class="Type">bool</span>&gt;;
+<span class="Statement">using</span> bvec3 = gvec3&lt;<span class="Type">bool</span>&gt;;
+<span class="Statement">using</span> bvec4 = gvec4&lt;<span class="Type">bool</span>&gt;;
+
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Misc utilities</span>
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> t&gt; <span class="StorageClass">constexpr</span> t
+Maximum(t A, t B)
+{
+    <span class="Statement">return</span> (A &gt; B) ? A : B;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> t&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> t
+Minimum(t A, t B)
+{
+    <span class="Statement">return</span> (A &lt; B) ? A : B;
+}
+
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> t&gt; <span class="StorageClass">constexpr</span> t
+Clamp(t X, t Lo, t Hi)
+{
+    <span class="Conditional">if</span> (X &lt; Lo) <span class="Statement">return</span> Lo;
+    <span class="Conditional">if</span> (X &gt; Hi) <span class="Statement">return</span> Hi;
+    <span class="Conditional">else</span>        <span class="Statement">return</span> X;
+}
+
+<span class="Type">inline</span> <span class="Type">float</span>
+SelectNearestElem(vec3 V, <span class="Type">float</span> U)
+{
+    <span class="Type">float</span> D0 = std::abs(V.X - U);
+    <span class="Type">float</span> D1 = std::abs(V.Y - U);
+    <span class="Type">float</span> D2 = std::abs(V.Z - U);
+
+    <span class="Conditional">if</span> (D0 &lt; D1 &amp;&amp; D0 &lt; D2) <span class="Statement">return</span> V.X;
+    <span class="Conditional">if</span> (D1 &lt; D0 &amp;&amp; D1 &lt; D2) <span class="Statement">return</span> V.Y;
+    <span class="Conditional">else</span>                    <span class="Statement">return</span> V.Z;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> <span class="Type">float</span>
+Sign(<span class="Type">float</span> X)
+{
+    <span class="Conditional">if</span> (X &gt; <span class="Constant">0.0f</span>) <span class="Statement">return</span> <span class="Constant">1.0f</span>;
+    <span class="Conditional">if</span> (X &lt; <span class="Constant">0.0f</span>) <span class="Statement">return</span> -<span class="Constant">1.0f</span>;
+    <span class="Conditional">else</span>          <span class="Statement">return</span> <span class="Constant">0.0f</span>;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec2
+Sign(vec2 V)
+{
+    <span class="Statement">return</span> vec2{ Sign(V.X), Sign(V.Y) };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec3
+Sign(vec3 V)
+{
+    <span class="Statement">return</span> vec3{ Sign(V.X), Sign(V.Y), Sign(V.Z) };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec4
+Sign(vec4 V)
+{
+    <span class="Statement">return</span> vec4{ Sign(V.X), Sign(V.Y), Sign(V.Z), Sign(V.W) };
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">int</span>
+Round(<span class="Type">float</span> X)
+{
+    <span class="Statement">return</span> <span class="Statement">static_cast</span>&lt;<span class="Type">int</span>&gt;(std::roundf(X));
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u32
+SafeIntToU32(<span class="Type">int</span> X)
+{
+    <span class="Statement">return</span> <span class="Statement">static_cast</span>&lt;u32&gt;(Maximum(X, <span class="Constant">0</span>));
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> <span class="Type">float</span>
+Rads(<span class="Type">float</span> Degrees)
+{
+    <span class="Statement">return</span> (Degrees*PI_OVER_180_DG);
+}
+
+
+
+<span class="Comment">// Min/Max for vectors are always component-wise</span>
+<span class="Comment">//</span>
+<span class="Comment">// Since we can't partially specialise function templates, we just define</span>
+<span class="Comment">// min/max/clamp for float vectors.</span>
+<span class="Structure">template</span> &lt;&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec2
+Minimum&lt;vec2&gt;(vec2 A, vec2 B)
+{
+    <span class="Statement">return</span> vec2{
+        Minimum(A.X, B.X),
+        Minimum(A.Y, B.Y)
+    };
+}
+
+<span class="Structure">template</span> &lt;&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec2
+Maximum&lt;vec2&gt;(vec2 A, vec2 B)
+{
+    <span class="Statement">return</span> vec2{
+        Maximum(A.X, B.X),
+        Maximum(A.Y, B.Y)
+    };
+}
+
+<span class="Structure">template</span> &lt;&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec3
+Minimum&lt;vec3&gt;(vec3 A, vec3 B)
+{
+    <span class="Statement">return</span> vec3{
+        Minimum(A.X, B.X),
+        Minimum(A.Y, B.Y),
+        Minimum(A.Z, B.Z)
+    };
+}
+
+<span class="Structure">template</span> &lt;&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec3
+Maximum&lt;vec3&gt;(vec3 A, vec3 B)
+{
+    <span class="Statement">return</span> vec3{
+        Maximum(A.X, B.X),
+        Maximum(A.Y, B.Y),
+        Maximum(A.Z, B.Z)
+    };
+}
+
+<span class="Structure">template</span> &lt;&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec4
+Minimum&lt;vec4&gt;(vec4 A, vec4 B)
+{
+    <span class="Statement">return</span> vec4{
+        Minimum(A.X, B.X),
+        Minimum(A.Y, B.Y),
+        Minimum(A.Z, B.Z),
+        Minimum(A.W, B.W)
+    };
+}
+
+<span class="Structure">template</span> &lt;&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec4
+Maximum&lt;vec4&gt;(vec4 A, vec4 B)
+{
+    <span class="Statement">return</span> vec4{
+        Maximum(A.X, B.X),
+        Maximum(A.Y, B.Y),
+        Maximum(A.Z, B.Z),
+        Maximum(A.W, B.W)
+    };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> c
+HorzMax(gvec2&lt;c&gt; V)
+{
+    <span class="Statement">return</span> Maximum(V.X, V.Y);
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> c
+HorzMin(gvec2&lt;c&gt; V)
+{
+    <span class="Statement">return</span> Minimum(V.X, V.Y);
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> c
+HorzMax(gvec3&lt;c&gt; V)
+{
+    <span class="Statement">return</span> Maximum(V.X, Maximum(V.Y, V.Z));
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> c
+HorzMin(gvec3&lt;c&gt; V)
+{
+    <span class="Statement">return</span> Minimum(V.X, Minimum(V.Y, V.Z));
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> c
+HorzMax(gvec4&lt;c&gt; V)
+{
+    <span class="Statement">return</span> Maximum(V.X, Maximum(V.Y, Maximum(V.Z, V.W)));
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> c
+HorzMin(gvec4&lt;c&gt; V)
+{
+    <span class="Statement">return</span> Minimum(V.X, Minimum(V.Y, Minimum(V.Z, V.W)));
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> gvec2&lt;c&gt;
+Abs(gvec2&lt;c&gt; V)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{std::abs(V.X), std::abs(V.Y) };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> gvec3&lt;c&gt;
+Abs(gvec3&lt;c&gt; V)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{std::abs(V.X), std::abs(V.Y), std::abs(V.Z) };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> gvec4&lt;c&gt;
+Abs(gvec4&lt;c&gt; V)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{std::abs(V.X), std::abs(V.Y), std::abs(V.Z), std::abs(V.W) };
+}
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Boolean horizontal functions (vec2)</span>
+
+<span class="StorageClass">constexpr</span> <span class="Type">bool</span>
+All(bvec2 A)
+{
+    <span class="Statement">return</span> A.X &amp;&amp; A.Y;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">bool</span>
+Any(bvec2 A)
+{
+    <span class="Statement">return</span> A.X || A.Y;
+}
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Boolean horizontal functions (vec3)</span>
+
+<span class="StorageClass">constexpr</span> <span class="Type">bool</span>
+All(bvec3 A)
+{
+    <span class="Statement">return</span> A.X &amp;&amp; A.Y &amp;&amp; A.Z;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">bool</span>
+Any(bvec3 A)
+{
+    <span class="Statement">return</span> A.X || A.Y || A.Z;
+}
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Boolean horizontal functions (vec4)</span>
+
+<span class="StorageClass">constexpr</span> <span class="Type">bool</span>
+All(bvec4 A)
+{
+    <span class="Statement">return</span> A.X &amp;&amp; A.Y &amp;&amp; A.Z &amp;&amp; A.W;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">bool</span>
+Any(bvec4 A)
+{
+    <span class="Statement">return</span> A.X || A.Y || A.Z || A.W;
+}
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Special boolean functions (vec2)</span>
+<span class="StorageClass">constexpr</span> bvec2
+<span class="Operator">operator</span>&amp;&amp;(bvec2 L, bvec2 R)
+{
+    <span class="Statement">return</span> bvec2{ L.X &amp;&amp; R.X, L.Y &amp;&amp; R.Y };
+}
+
+<span class="StorageClass">constexpr</span> bvec2
+<span class="Operator">operator</span>||(bvec2 L, bvec2 R)
+{
+    <span class="Statement">return</span> bvec2{ L.X || R.X, L.Y || R.Y };
+}
+
+<span class="StorageClass">constexpr</span> bvec2
+<span class="Operator">operator</span>!(bvec2 L)
+{
+    <span class="Statement">return</span> bvec2{ !L.X, !L.Y};
+}
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Special boolean functions (vec3)</span>
+<span class="StorageClass">constexpr</span> bvec3
+<span class="Operator">operator</span>&amp;&amp;(bvec3 L, bvec3 R)
+{
+    <span class="Statement">return</span> bvec3{ L.X &amp;&amp; R.X, L.Y &amp;&amp; R.Y, L.Z &amp;&amp; R.Z };
+}
+
+<span class="StorageClass">constexpr</span> bvec3
+<span class="Operator">operator</span>||(bvec3 L, bvec3 R)
+{
+    <span class="Statement">return</span> bvec3{ L.X || R.X, L.Y || R.Y, L.Z || R.Z };
+}
+
+<span class="StorageClass">constexpr</span> bvec3
+<span class="Operator">operator</span>!(bvec3 L)
+{
+    <span class="Statement">return</span> bvec3{ !L.X, !L.Y, !L.Z};
+}
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Special boolean functions (vec3)</span>
+<span class="StorageClass">constexpr</span> bvec4
+<span class="Operator">operator</span>&amp;&amp;(bvec4 L, bvec4 R)
+{
+    <span class="Statement">return</span> bvec4{ L.X &amp;&amp; R.X, L.Y &amp;&amp; R.Y, L.Z &amp;&amp; R.Z, L.W &amp;&amp; R.W };
+}
+
+<span class="StorageClass">constexpr</span> bvec4
+<span class="Operator">operator</span>||(bvec4 L, bvec4 R)
+{
+    <span class="Statement">return</span> bvec4{ L.X || R.X, L.Y || R.Y, L.Z || R.Z, L.W || R.W };
+}
+
+<span class="StorageClass">constexpr</span> bvec4
+<span class="Operator">operator</span>!(bvec4 L)
+{
+    <span class="Statement">return</span> bvec4{ !L.X, !L.Y, !L.Z, !L.W};
+}
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Comparison operators (vec2)</span>
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec2 Equal(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec2{ L.X == R.X, L.Y == R.Y };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec2 NotEqual(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec2{ L.X != R.X, L.Y != R.Y };
+}
+
+<span class="Structure">template</span>&lt;&gt;
+<span class="Type">inline</span> bvec2 Equal(vec2 L, vec2 R)
+{
+    <span class="Statement">return</span> bvec2{ fabsf(L.X - R.X) &lt; EPSILON, fabsf(L.Y - R.Y) &lt; EPSILON };
+}
+
+<span class="Structure">template</span>&lt;&gt;
+<span class="Type">inline</span> bvec2 NotEqual(vec2 L, vec2 R)
+{
+    <span class="Statement">return</span> bvec2{ fabsf(L.X - R.X) &gt; EPSILON, fabsf(L.Y - R.Y) &gt; EPSILON };
+}
+
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec2 LessThan(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec2{ L.X &lt; R.X, L.Y &lt; R.Y };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec2 LessThanEqual(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec2{ L.X &lt;= R.X, L.Y &lt;= R.Y };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec2 GreaterThan(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec2{ L.X &gt; R.X, L.Y &gt; R.Y };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec2 GreaterThanEqual(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec2{ L.X &gt;= R.X, L.Y &gt;= R.Y };
+}
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Comparison operators (vec3)</span>
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec3 Equal(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec3{ L.X == R.X, L.Y == R.Y, L.Z == R.Z };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec3 NotEqual(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec3{ L.X != R.X, L.Y != R.Y, L.Z != R.Z };
+}
+
+<span class="Structure">template</span>&lt;&gt;
+<span class="Type">inline</span> bvec3 Equal(vec3 L, vec3 R)
+{
+    <span class="Statement">return</span> bvec3{
+        fabsf(L.X - R.X) &lt; EPSILON,
+        fabsf(L.Y - R.Y) &lt; EPSILON,
+        fabsf(L.Z - R.Z) &lt; EPSILON,
+    };
+}
+
+<span class="Structure">template</span>&lt;&gt;
+<span class="Type">inline</span> bvec3 NotEqual(vec3 L, vec3 R)
+{
+    <span class="Statement">return</span> bvec3{
+        fabsf(L.X - R.X) &gt; EPSILON,
+        fabsf(L.Y - R.Y) &gt; EPSILON,
+        fabsf(L.Z - R.Z) &gt; EPSILON,
+    };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec3 LessThan(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec3{ L.X &lt; R.X, L.Y &lt; R.Y, L.Z &lt; R.Z };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec3 LessThanEqual(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec3{ L.X &lt;= R.X, L.Y &lt;= R.Y, L.Z &lt;= R.Z };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec3 GreaterThan(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec3{ L.X &gt; R.X, L.Y &gt; R.Y, L.Z &gt; R.Z };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec3 GreaterThanEqual(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec3{ L.X &gt;= R.X, L.Y &gt;= R.Y, L.Z &gt;= R.Z };
+}
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Comparison operators (vec4)</span>
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec4 Equal(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec4{ L.X == R.X, L.Y == R.Y, L.Z == R.Z, L.W == R.W };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec4 NotEqual(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec4{ L.X != R.X, L.Y != R.Y, L.Z != R.Z, L.W != R.W };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec4 LessThan(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec4{ L.X &lt; R.X, L.Y &lt; R.Y, L.Z &lt; R.Z, L.W &lt; R.W };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec4 LessThanEqual(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec4{ L.X &lt;= R.X, L.Y &lt;= R.Y, L.Z &lt;= R.Z, L.W &lt;= R.W };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec4 GreaterThan(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec4{ L.X &gt; R.X, L.Y &gt; R.Y, L.Z &gt; R.Z, L.W &gt; R.W };
+}
+
+<span class="Structure">template</span>&lt;<span class="Structure">typename</span> c&gt;
+<span class="StorageClass">constexpr</span> bvec4 GreaterThanEqual(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> bvec4{ L.X &gt;= R.X, L.Y &gt;= R.Y, L.Z &gt;= R.Z, L.W &gt;= R.W };
+}
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Arithmetic operators (vec2)</span>
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;
+<span class="Operator">operator</span>+(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ L.X+R.X, L.Y+R.Y };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;
+<span class="Operator">operator</span>-(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ L.X-R.X, L.Y-R.Y };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;
+<span class="Operator">operator</span>*(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ L.X*R.X, L.Y*R.Y };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;
+<span class="Operator">operator</span>/(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ L.X/R.X, L.Y/R.Y };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;
+<span class="Operator">operator</span>%(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ L.X%R.X, L.Y%R.Y };
+}
+
+<span class="Comment">// Assignment operators</span>
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;&amp;
+<span class="Operator">operator</span>+=(gvec2&lt;c&gt;&amp; L, gvec2&lt;c&gt; R)
+{
+    L = L + R;
+    <span class="Statement">return</span> L;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;&amp;
+<span class="Operator">operator</span>-=(gvec2&lt;c&gt;&amp; L, gvec2&lt;c&gt; R)
+{
+    L = L - R;
+    <span class="Statement">return</span> L;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;&amp;
+<span class="Operator">operator</span>*=(gvec2&lt;c&gt;&amp; L, gvec2&lt;c&gt; R)
+{
+    L = L * R;
+    <span class="Statement">return</span> L;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;&amp;
+<span class="Operator">operator</span>/=(gvec2&lt;c&gt;&amp; L, gvec2&lt;c&gt; R)
+{
+    L = L / R;
+    <span class="Statement">return</span> L;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;&amp;
+<span class="Operator">operator</span>%=(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    L = L % R;
+    <span class="Statement">return</span> L;
+}
+
+<span class="Comment">// Scalars always come on the right</span>
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;
+<span class="Operator">operator</span>+(gvec2&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ L.X + R, L.Y + R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;
+<span class="Operator">operator</span>-(gvec2&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ L.X - R, L.Y - R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;
+<span class="Operator">operator</span>*(gvec2&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ L.X*R, L.Y*R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;
+<span class="Operator">operator</span>/(gvec2&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ L.X/R, L.Y/R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec2&lt;c&gt;
+<span class="Operator">operator</span>%(gvec2&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ L.X%R, L.Y%R };
+}
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Arithmetic operators (vec3)</span>
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;
+<span class="Operator">operator</span>+(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{ L.X+R.X, L.Y+R.Y, L.Z+R.Z };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;
+<span class="Operator">operator</span>-(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{ L.X-R.X, L.Y-R.Y, L.Z-R.Z };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;
+<span class="Operator">operator</span>*(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{ L.X*R.X, L.Y*R.Y, L.Z*R.Z };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;
+<span class="Operator">operator</span>/(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{ L.X/R.X, L.Y/R.Y, L.Z/R.Z };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;
+<span class="Operator">operator</span>%(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{ L.X%R.X, L.Y%R.Y, L.Z%R.Z };
+}
+
+<span class="Comment">// Assignment operators</span>
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;&amp;
+<span class="Operator">operator</span>+=(gvec3&lt;c&gt;&amp; L, gvec3&lt;c&gt; R)
+{
+    L = L + R;
+    <span class="Statement">return</span> L;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;&amp;
+<span class="Operator">operator</span>-=(gvec3&lt;c&gt;&amp; L, gvec3&lt;c&gt; R)
+{
+    L = L - R;
+    <span class="Statement">return</span> L;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;&amp;
+<span class="Operator">operator</span>*=(gvec3&lt;c&gt;&amp; L, gvec3&lt;c&gt; R)
+{
+    L = L * R;
+    <span class="Statement">return</span> L;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;&amp;
+<span class="Operator">operator</span>/=(gvec3&lt;c&gt;&amp; L, gvec3&lt;c&gt; R)
+{
+    L = L / R;
+    <span class="Statement">return</span> L;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;&amp;
+<span class="Operator">operator</span>%=(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    L = L % R;
+    <span class="Statement">return</span> L;
+}
+
+<span class="Comment">// Scalars always come on the right</span>
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;
+<span class="Operator">operator</span>+(gvec3&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{ L.X + R, L.Y + R, L.Z + R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;
+<span class="Operator">operator</span>-(gvec3&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{ L.X - R, L.Y - R, L.Z - R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;
+<span class="Operator">operator</span>*(gvec3&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{ L.X*R, L.Y*R, L.Z*R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;
+<span class="Operator">operator</span>/(gvec3&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{ L.X/R, L.Y/R, L.Z/R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec3&lt;c&gt;
+<span class="Operator">operator</span>%(gvec3&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{ L.X%R, L.Y%R, L.Z%R };
+}
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Arithmetic operators (vec4)</span>
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec4&lt;c&gt;
+<span class="Type">inline</span> <span class="Operator">operator</span>+(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{ L.X+R.X, L.Y+R.Y, L.Z+R.Z, L.W+R.W };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec4&lt;c&gt;
+<span class="Type">inline</span> <span class="Operator">operator</span>-(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{ L.X-R.X, L.Y-R.Y, L.Z-R.Z, L.W-R.W };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec4&lt;c&gt;
+<span class="Type">inline</span> <span class="Operator">operator</span>*(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{ L.X*R.X, L.Y*R.Y, L.Z*R.Z, L.W*R.W };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec4&lt;c&gt;
+<span class="Type">inline</span> <span class="Operator">operator</span>/(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{ L.X/R.X, L.Y/R.Y, L.Z/R.Z, L.W/R.W };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec4&lt;c&gt;
+<span class="Type">inline</span> <span class="Operator">operator</span>%(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{ L.X%R.X, L.Y%R.Y, L.Z%R.Z, L.W%R.W };
+}
+
+<span class="Comment">// Scalars always come on the right</span>
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec4&lt;c&gt;
+<span class="Operator">operator</span>+(gvec4&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{ L.X + R, L.Y + R, L.Z + R, L.W + R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec4&lt;c&gt;
+<span class="Operator">operator</span>-(gvec4&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{ L.X - R, L.Y - R, L.Z - R, L.W - R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec4&lt;c&gt;
+<span class="Operator">operator</span>*(gvec4&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{ L.X*R, L.Y*R, L.Z*R, L.W*R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec4&lt;c&gt;
+<span class="Operator">operator</span>/(gvec4&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{ L.X/R, L.Y/R, L.Z/R, L.W/R };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> gvec4&lt;c&gt;
+<span class="Operator">operator</span>%(gvec4&lt;c&gt; L, c R)
+{
+    <span class="Statement">return</span> gvec4&lt;c&gt;{ L.X%R, L.Y%R, L.Z%R, L.W%R };
+}
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Bitwise operations for unsigned vectors</span>
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>&amp;(uvec2 L, uvec2 R)
+{
+    <span class="Statement">return</span> uvec2{ L.X&amp;R.X, L.Y&amp;R.Y };
+}
+
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>|(uvec2 L, uvec2 R)
+{
+    <span class="Statement">return</span> uvec2{ L.X|R.X, L.Y|R.Y };
+}
+
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>^(uvec2 L, uvec2 R)
+{
+    <span class="Statement">return</span> uvec2{ L.X^R.X, L.Y^R.Y };
+}
+
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>&gt;&gt;(uvec2 L, uvec2 R)
+{
+    <span class="Statement">return</span> uvec2{ L.X&gt;&gt;R.X, L.Y&gt;&gt;R.Y };
+}
+
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>&lt;&lt;(uvec2 L, uvec2 R)
+{
+    <span class="Statement">return</span> uvec2{ L.X&lt;&lt;R.X, L.Y&lt;&lt;R.Y };
+}
+
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>~(uvec2 L)
+{
+    <span class="Statement">return</span> uvec2{ ~L.X, ~L.Y };
+}
+
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>&amp;(uvec2 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec2{ L.X&amp;R, L.Y&amp;R };
+}
+
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>|(uvec2 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec2{ L.X|R, L.Y|R };
+}
+
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>^(uvec2 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec2{ L.X^R, L.Y^R };
+}
+
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>&gt;&gt;(uvec2 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec2{ L.X&gt;&gt;R, L.Y&gt;&gt;R };
+}
+
+<span class="Type">inline</span> uvec2
+<span class="Operator">operator</span>&lt;&lt;(uvec2 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec2{ L.X&lt;&lt;R, L.Y&lt;&lt;R };
+}
+
+
+<span class="Comment">// Vec3</span>
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>&amp;(uvec3 L, uvec3 R)
+{
+    <span class="Statement">return</span> uvec3{ L.X&amp;R.X, L.Y&amp;R.Y, L.Z&amp;R.Z };
+}
+
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>|(uvec3 L, uvec3 R)
+{
+    <span class="Statement">return</span> uvec3{ L.X|R.X, L.Y|R.Y, L.Z|R.Z };
+}
+
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>^(uvec3 L, uvec3 R)
+{
+    <span class="Statement">return</span> uvec3{ L.X^R.X, L.Y^R.Y, L.Z^R.Z };
+}
+
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>&gt;&gt;(uvec3 L, uvec3 R)
+{
+    <span class="Statement">return</span> uvec3{ L.X&gt;&gt;R.X, L.Y&gt;&gt;R.Y, L.Z&gt;&gt;R.Z };
+}
+
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>&lt;&lt;(uvec3 L, uvec3 R)
+{
+    <span class="Statement">return</span> uvec3{ L.X&lt;&lt;R.X, L.Y&lt;&lt;R.Y, L.Z&lt;&lt;R.Z };
+}
+
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>~(uvec3 L)
+{
+    <span class="Statement">return</span> uvec3{ ~L.X, ~L.Y, ~L.Z };
+}
+
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>&amp;(uvec3 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec3{ L.X&amp;R, L.Y&amp;R, L.Z&amp;R };
+}
+
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>|(uvec3 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec3{ L.X|R, L.Y|R, L.Z|R };
+}
+
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>^(uvec3 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec3{ L.X^R, L.Y^R, L.Z^R };
+}
+
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>&gt;&gt;(uvec3 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec3{ L.X&gt;&gt;R, L.Y&gt;&gt;R, L.Z&gt;&gt;R };
+}
+
+<span class="Type">inline</span> uvec3
+<span class="Operator">operator</span>&lt;&lt;(uvec3 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec3{ L.X&lt;&lt;R, L.Y&lt;&lt;R, L.Z&lt;&lt;R };
+}
+
+<span class="Comment">// Vec4</span>
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>&amp;(uvec4 L, uvec4 R)
+{
+    <span class="Statement">return</span> uvec4{ L.X&amp;R.X, L.Y&amp;R.Y, L.Z&amp;R.Z, L.W&amp;R.W };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>|(uvec4 L, uvec4 R)
+{
+    <span class="Statement">return</span> uvec4{ L.X|R.X, L.Y|R.Y, L.Z|R.Z, L.W|R.W };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>^(uvec4 L, uvec4 R)
+{
+    <span class="Statement">return</span> uvec4{ L.X^R.X, L.Y^R.Y, L.Z^R.Z, L.W^R.W };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>&gt;&gt;(uvec4 L, uvec4 R)
+{
+    <span class="Statement">return</span> uvec4{ L.X&gt;&gt;R.X, L.Y&gt;&gt;R.Y, L.Z&gt;&gt;R.Z, L.W&gt;&gt;R.W };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>&lt;&lt;(uvec4 L, uvec4 R)
+{
+    <span class="Statement">return</span> uvec4{ L.X&lt;&lt;R.X, L.Y&lt;&lt;R.Y, L.Z&lt;&lt;R.Z, L.W&lt;&lt;R.W };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>~(uvec4 L)
+{
+    <span class="Statement">return</span> uvec4{ ~L.X, ~L.Y, ~L.Z, ~L.W };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>&amp;(uvec4 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec4{ L.X&amp;R, L.Y&amp;R, L.Z&amp;R, L.W&amp;R };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>|(uvec4 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec4{ L.X|R, L.Y|R, L.Z|R, L.W|R };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>^(uvec4 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec4{ L.X^R, L.Y^R, L.Z^R, L.W^R };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>&gt;&gt;(uvec4 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec4{ L.X&gt;&gt;R, L.Y&gt;&gt;R, L.Z&gt;&gt;R, L.W&gt;&gt;R };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> uvec4
+<span class="Operator">operator</span>&lt;&lt;(uvec4 L, <span class="Type">unsigned</span> <span class="Type">int</span> R)
+{
+    <span class="Statement">return</span> uvec4{ L.X&lt;&lt;R, L.Y&lt;&lt;R, L.Z&lt;&lt;R, L.W&lt;&lt;R };
+}
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Vector/Linear Algebra functions</span>
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> c
+Dot(gvec2&lt;c&gt; L, gvec2&lt;c&gt; R)
+{
+    <span class="Statement">return</span> L.X*R.X + L.Y*R.Y;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> c
+Dot(gvec3&lt;c&gt; L, gvec3&lt;c&gt; R)
+{
+    <span class="Statement">return</span> L.X*R.X + L.Y*R.Y + L.Z*R.Z;
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> c
+Dot(gvec4&lt;c&gt; L, gvec4&lt;c&gt; R)
+{
+    <span class="Statement">return</span> L.X*R.X + L.Y*R.Y + L.Z*R.Z + L.W*R.W;
+}
+
+<span class="Type">inline</span> <span class="Type">float</span>
+Length(vec2 V)
+{
+    <span class="Statement">return</span> sqrtf(V.X*V.X + V.Y*V.Y);
+}
+
+<span class="Type">inline</span> <span class="Type">float</span>
+Length(vec3 V)
+{
+    <span class="Statement">return</span> sqrtf(V.X*V.X + V.Y*V.Y + V.Z*V.Z);
+}
+
+<span class="Type">inline</span> <span class="Type">float</span>
+Length(vec4 V)
+{
+    <span class="Statement">return</span> sqrtf(V.X*V.X + V.Y*V.Y + V.Z*V.Z + V.W*V.W);
+}
+
+<span class="Type">inline</span> <span class="Type">float</span>
+LengthSq(vec2 V)
+{
+    <span class="Statement">return</span> (V.X*V.X + V.Y*V.Y);
+}
+
+<span class="Type">inline</span> <span class="Type">float</span>
+LengthSq(vec3 V)
+{
+    <span class="Statement">return</span> (V.X*V.X + V.Y*V.Y + V.Z*V.Z);
+}
+
+<span class="Type">inline</span> <span class="Type">float</span>
+LengthSq(vec4 V)
+{
+    <span class="Statement">return</span> (V.X*V.X + V.Y*V.Y + V.Z*V.Z + V.W*V.W);
+}
+
+<span class="Type">inline</span> vec2
+Normalize(vec2 V)
+{
+    <span class="Type">float</span> L = Length(V);
+
+    <span class="Statement">return</span> (<span class="Constant">0.0f</span> != L) ? (V / L) : V;
+}
+
+<span class="Type">inline</span> vec3
+Normalize(vec3 V)
+{
+    <span class="Type">float</span> L = Length(V);
+
+    <span class="Statement">return</span> (<span class="Constant">0.0f</span> != L) ? (V / L) : V;
+}
+
+<span class="Type">inline</span> vec4
+Normalize(vec4 V)
+{
+    <span class="Type">float</span> L = Length(V);
+
+    <span class="Statement">return</span> (<span class="Constant">0.0f</span> != L) ? (V / L) : V;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec3
+Cross(vec3 U, vec3 V)
+{
+    <span class="Statement">return</span> vec3{
+        (U.Y * V.Z) - (U.Z * V.Y),
+        (U.Z * V.X) - (U.X * V.Z),
+        (U.X * V.Y) - (U.Y * V.X)
+    };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec3
+Reciprocal(vec3 V)
+{
+    <span class="Statement">return</span> vec3{ <span class="Constant">1.0f</span>/V.X, <span class="Constant">1.0f</span>/V.Y, <span class="Constant">1.0f</span>/V.Z };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> gvec2&lt;c&gt;
+Select(gvec2&lt;c&gt; T, gvec2&lt;c&gt; F, bvec2 Msk)
+{
+    <span class="Statement">return</span> gvec2&lt;c&gt;{ (Msk.X) ? T.X : F.X, (Msk.Y) ? T.Y : F.Y };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> gvec3&lt;c&gt;
+Select(gvec3&lt;c&gt; T, gvec3&lt;c&gt; F, bvec3 Msk)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{
+        (Msk.X) ? T.X : F.X,
+        (Msk.Y) ? T.Y : F.Y,
+        (Msk.Z) ? T.Z : F.Z
+    };
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> c&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> gvec4&lt;c&gt;
+Select(gvec4&lt;c&gt; T, gvec4&lt;c&gt; F, bvec4 Msk)
+{
+    <span class="Statement">return</span> gvec3&lt;c&gt;{
+        (Msk.X) ? T.X : F.X,
+        (Msk.Y) ? T.Y : F.Y,
+        (Msk.Z) ? T.Z : F.Z,
+        (Msk.W) ? T.W : F.W
+    };
+}
+
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Matrices</span>
+
+
+<span class="Structure">struct</span> mat4x4
+{
+    <span class="Type">float</span> M[<span class="Constant">4</span>][<span class="Constant">4</span>];
+};
+
+<span class="Structure">struct</span> mat3x3
+{
+    <span class="Type">float</span> M[<span class="Constant">3</span>][<span class="Constant">3</span>];
+};
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> mat4x4
+IdentityMatrix4()
+{
+    <span class="Statement">return</span> mat4x4{{
+        { <span class="Constant">1.0f</span>, <span class="Constant">0.0f</span>, <span class="Constant">0.0f</span>, <span class="Constant">0.0f</span> },
+        { <span class="Constant">0.0f</span>, <span class="Constant">1.0f</span>, <span class="Constant">0.0f</span>, <span class="Constant">0.0f</span> },
+        { <span class="Constant">0.0f</span>, <span class="Constant">0.0f</span>, <span class="Constant">1.0f</span>, <span class="Constant">0.0f</span> },
+        { <span class="Constant">0.0f</span>, <span class="Constant">0.0f</span>, <span class="Constant">0.0f</span>, <span class="Constant">1.0f</span> }
+    }};
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> mat3x3
+IdentityMatrix3()
+{
+    <span class="Statement">return</span> mat3x3{{
+        { <span class="Constant">1.0f</span>, <span class="Constant">0.0f</span>, <span class="Constant">0.0f</span> },
+        { <span class="Constant">0.0f</span>, <span class="Constant">1.0f</span>, <span class="Constant">0.0f</span> },
+        { <span class="Constant">0.0f</span>, <span class="Constant">0.0f</span>, <span class="Constant">1.0f</span> },
+    }};
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> mat4x4
+Translation(vec3 Translation)
+{
+    mat4x4 T = IdentityMatrix4();
+
+    T.M[<span class="Constant">0</span>][<span class="Constant">3</span>] = Translation.X;
+    T.M[<span class="Constant">1</span>][<span class="Constant">3</span>] = Translation.Y;
+    T.M[<span class="Constant">2</span>][<span class="Constant">3</span>] = Translation.Z;
+
+    <span class="Statement">return</span> T;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> <span class="Type">void</span>
+Translate(mat4x4&amp; Matrix, vec3 Translation)
+{
+    Matrix.M[<span class="Constant">0</span>][<span class="Constant">3</span>] = Translation.X;
+    Matrix.M[<span class="Constant">1</span>][<span class="Constant">3</span>] = Translation.Y;
+    Matrix.M[<span class="Constant">2</span>][<span class="Constant">3</span>] = Translation.Z;
+}
+
+<span class="Type">inline</span> vec3
+<span class="Operator">operator</span>*(<span class="StorageClass">const</span> vec3&amp; V, <span class="StorageClass">const</span> mat3x3&amp; M)
+{
+    vec3 Out;
+
+    <span class="Comment">// Matrix indexed as [row][col]</span>
+    Out.X = V.X*M.M[<span class="Constant">0</span>][<span class="Constant">0</span>] + V.Y*M.M[<span class="Constant">1</span>][<span class="Constant">0</span>] + V.Z*M.M[<span class="Constant">2</span>][<span class="Constant">0</span>];
+    Out.Y = V.X*M.M[<span class="Constant">0</span>][<span class="Constant">1</span>] + V.Y*M.M[<span class="Constant">1</span>][<span class="Constant">1</span>] + V.Z*M.M[<span class="Constant">2</span>][<span class="Constant">1</span>];
+    Out.Z = V.X*M.M[<span class="Constant">0</span>][<span class="Constant">2</span>] + V.Y*M.M[<span class="Constant">1</span>][<span class="Constant">2</span>] + V.Z*M.M[<span class="Constant">2</span>][<span class="Constant">2</span>];
+
+    <span class="Statement">return</span> Out;
+}
+
+<span class="Type">inline</span> mat4x4
+<span class="Operator">operator</span>*(mat4x4 L, mat4x4 R)
+{
+    mat4x4 O;
+    O.M[<span class="Constant">0</span>][<span class="Constant">0</span>] = (L.M[<span class="Constant">0</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">0</span>]);
+    O.M[<span class="Constant">0</span>][<span class="Constant">1</span>] = (L.M[<span class="Constant">0</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">1</span>]);
+    O.M[<span class="Constant">0</span>][<span class="Constant">2</span>] = (L.M[<span class="Constant">0</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">2</span>]);
+    O.M[<span class="Constant">0</span>][<span class="Constant">3</span>] = (L.M[<span class="Constant">0</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">0</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">3</span>]);
+
+    O.M[<span class="Constant">1</span>][<span class="Constant">0</span>] = (L.M[<span class="Constant">1</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">0</span>]);
+    O.M[<span class="Constant">1</span>][<span class="Constant">1</span>] = (L.M[<span class="Constant">1</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">1</span>]);
+    O.M[<span class="Constant">1</span>][<span class="Constant">2</span>] = (L.M[<span class="Constant">1</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">2</span>]);
+    O.M[<span class="Constant">1</span>][<span class="Constant">3</span>] = (L.M[<span class="Constant">1</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">1</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">3</span>]);
+
+    O.M[<span class="Constant">2</span>][<span class="Constant">0</span>] = (L.M[<span class="Constant">2</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">0</span>]);
+    O.M[<span class="Constant">2</span>][<span class="Constant">1</span>] = (L.M[<span class="Constant">2</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">1</span>]);
+    O.M[<span class="Constant">2</span>][<span class="Constant">2</span>] = (L.M[<span class="Constant">2</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">2</span>]);
+    O.M[<span class="Constant">2</span>][<span class="Constant">3</span>] = (L.M[<span class="Constant">2</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">2</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">3</span>]);
+
+    O.M[<span class="Constant">3</span>][<span class="Constant">0</span>] = (L.M[<span class="Constant">3</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">0</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">0</span>]);
+    O.M[<span class="Constant">3</span>][<span class="Constant">1</span>] = (L.M[<span class="Constant">3</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">1</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">1</span>]);
+    O.M[<span class="Constant">3</span>][<span class="Constant">2</span>] = (L.M[<span class="Constant">3</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">2</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">2</span>]);
+    O.M[<span class="Constant">3</span>][<span class="Constant">3</span>] = (L.M[<span class="Constant">3</span>][<span class="Constant">0</span>]*R.M[<span class="Constant">0</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">1</span>]*R.M[<span class="Constant">1</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">2</span>]*R.M[<span class="Constant">2</span>][<span class="Constant">3</span>]) + (L.M[<span class="Constant">3</span>][<span class="Constant">3</span>]*R.M[<span class="Constant">3</span>][<span class="Constant">3</span>]);
+
+    <span class="Statement">return</span> O;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> mat4x4
+PerspectiveProjection(<span class="Type">float</span> CotHalfFov, <span class="Type">float</span> AspectRatio, <span class="Type">float</span> Zn, <span class="Type">float</span> Zf)
+{
+    <span class="StorageClass">const</span> <span class="Type">float</span> ScaleX = CotHalfFov;
+    <span class="StorageClass">const</span> <span class="Type">float</span> ScaleY = CotHalfFov * AspectRatio;
+    <span class="StorageClass">const</span> <span class="Type">float</span> ScaleZ = -(Zf + Zn) / (Zf - Zn);
+    <span class="StorageClass">const</span> <span class="Type">float</span> OffsetZ = -(<span class="Constant">2.0f</span> * Zn * Zf) / (Zf - Zn);
+    <span class="StorageClass">const</span> <span class="Type">float</span> ScaleW = -<span class="Constant">1.0f</span>;
+
+    mat4x4 P = {{
+        { ScaleX, <span class="Constant">0.0f</span>,   <span class="Constant">0.0f</span>,   <span class="Constant">0.0f</span> },
+        { <span class="Constant">0.0f</span>,   ScaleY, <span class="Constant">0.0f</span>,   <span class="Constant">0.0f</span> },
+        { <span class="Constant">0.0f</span>,   <span class="Constant">0.0f</span>,   ScaleZ, OffsetZ },
+        { <span class="Constant">0.0f</span>,   <span class="Constant">0.0f</span>,   ScaleW,   <span class="Constant">0.0f</span> }
+    }};
+
+    <span class="Statement">return</span> P;
+}
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Quaternions</span>
+<span class="Structure">struct</span> quat
+{
+    <span class="Type">float</span> X, Y, Z, W;
+};
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> quat
+<span class="Operator">operator</span>*(<span class="StorageClass">const</span> quat&amp; L, <span class="StorageClass">const</span> quat&amp; R)
+{
+    <span class="Comment">// NOTE: Quaternion Multiplication Derivation</span>
+    <span class="Comment">// RULES: </span>
+    <span class="Comment">//   ij = k   ji = -k</span>
+    <span class="Comment">//   jk = i   kj = -i</span>
+    <span class="Comment">//   ki = j   ik = -j</span>
+    <span class="Comment">//</span>
+    <span class="Comment">//         left                right</span>
+    <span class="Comment">//   (a + bi + cj + dk) * (w + xi + yj + zk)</span>
+    <span class="Comment">//    LX  LY   LZ   LW     RX  RY   RZ   RW</span>
+    <span class="Comment">//</span>
+    <span class="Comment">//   = [a.w + a.xi + a.yj + a.zk]</span>
+    <span class="Comment">//   + [bi.w + bi.xi + bi.yj + bi.zk]</span>
+    <span class="Comment">//   + [cj.w + cj.xi + cj.yj + cj.zk]</span>
+    <span class="Comment">//   + [dk.w + dk.xi + dk.yj + dk.zk]</span>
+    <span class="Comment">//</span>
+    <span class="Comment">//   = [a.w + a.xi + a.yj + a.zk]</span>
+    <span class="Comment">//   + [bi.w - b.x + by.k - bz.j]</span>
+    <span class="Comment">//   + [cj.w - cx.k - c.y + cz.i]</span>
+    <span class="Comment">//   + [dk.w + dx.j - dy.i - d.z]</span>
+    <span class="Comment">//</span>
+    <span class="Comment">//   = [a.w  - b.x  - c.y  - d.z]</span>
+    <span class="Comment">//   + [ax.i + bw.i + cz.i - dy.i]</span>
+    <span class="Comment">//   + [ay.j - bz.j + cj.w + dx.j]</span>
+    <span class="Comment">//   + [az.k + by.k - cx.k + dw.k]</span>
+    <span class="Comment">//</span>
+    <span class="Comment">//   = (aw - bx - cy - dz,</span>
+    <span class="Comment">//      ax + bw + cz - dy,</span>
+    <span class="Comment">//      ay - bz + cw + dx,</span>
+    <span class="Comment">//      az + by - cx + dw)</span>
+
+    <span class="Comment">//         left                right</span>
+    <span class="Comment">//   (a + bi + cj + dk) * (w + xi + yj + zk)</span>
+    <span class="Comment">//    LX  LY   LZ   LW     RX  RY   RZ   RW</span>
+    <span class="Statement">return</span> quat{
+         (L.X * R.X) - (L.Y * R.Y) - (L.Z * R.Z) - (L.W * R.W),
+         (L.X * R.Y) + (L.Y * R.X) + (L.Z * R.W) - (L.W * R.Z),
+         (L.X * R.Z) - (L.Y * R.W) + (L.Z * R.X) + (L.W * R.Y),
+         (L.X * R.W) + (L.Y * R.Z) - (L.Z * R.Y) + (L.W * R.X)
+    };
+}
+
+<span class="Type">inline</span> quat
+RotationQuaternion(<span class="StorageClass">const</span> <span class="Type">float</span> Angle, vec3 Axis)
+{
+    quat Result;
+
+    Result.X = cosf(Angle / <span class="Constant">2.0f</span>);
+
+    Result.Y = Axis.X * sinf(Angle / <span class="Constant">2.0f</span>);
+    Result.Z = Axis.Y * sinf(Angle / <span class="Constant">2.0f</span>);
+    Result.W = Axis.Z * sinf(Angle / <span class="Constant">2.0f</span>);
+
+    <span class="Statement">return</span> Result;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> quat
+Conjugate(quat Q)
+{
+    <span class="Statement">return</span> quat{ Q.X, -Q.Y, -Q.Z, -Q.W };
+}
+
+<span class="Type">inline</span> <span class="Type">float</span>
+QuatLength(quat Q)
+{
+    <span class="Statement">return</span> sqrtf(Q.X*Q.X + Q.Y*Q.Y + Q.Z*Q.Z + Q.W*Q.W);
+}
+
+<span class="Type">inline</span> quat
+Normalize(quat Q)
+{
+    quat Result;
+    <span class="Type">float</span> Length = QuatLength(Q);
+
+    Result.X = Q.X / Length;
+    Result.Y = Q.Y / Length;
+    Result.Z = Q.Z / Length;
+    Result.W = Q.W / Length;
+
+    <span class="Statement">return</span> Result;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec3
+ImaginaryPart(quat Q)
+{
+    <span class="Statement">return</span> vec3{ Q.Y, Q.Z, Q.W };
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> <span class="Type">float</span>
+RealPart(quat Q)
+{
+    <span class="Statement">return</span> Q.X;
+}
+
+<span class="StorageClass">constexpr</span> <span class="Type">inline</span> vec3
+Rotate(quat Rotation, vec3 V)
+{
+    vec3 T =  Cross(ImaginaryPart(Rotation), V) * <span class="Constant">2.0f</span>;
+    vec3 R = (T * RealPart(Rotation)) + Cross(ImaginaryPart(Rotation), T) + V;
+
+    <span class="Statement">return</span> R;
+
+}
+<span class="Comment">// }}}</span>
+
+
+<span class="Comment">// {{{ Morton key computation</span>
+<span class="StorageClass">static</span> <span class="Type">inline</span> u32
+HashVec3(uvec3 V)
+{
+    <span class="Statement">return</span> (V.X*<span class="Constant">73856093U</span>) ^ (V.Y*<span class="Constant">19349663U</span>) ^ (V.Z*<span class="Constant">83492791U</span>);
+}
+
+<span class="Statement">using</span> morton_key = u64;
+<span class="Comment">// Morton encoding by Fabien 'ryg' Giesen</span>
+<span class="Comment">// Giesen 2009, &quot;Decoding Morton Codes&quot;</span>
+<span class="Comment">// <a href="https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/">https://fgiesen.wordpress.com/2009/12/13/decoding-morton-codes/</a></span>
+<span class="Comment">// Accessed Mar. 2020</span>
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u64
+Part1By2_64(u64 X)
+{
+    <span class="Comment">// Select low 21 bits</span>
+    <span class="Comment">// Since we're interleaving the bits of three coordinates,</span>
+    <span class="Comment">// we can only fit 3*21 = 63 bits in a 64-bit number.</span>
+    X &amp;= <span class="Constant">0x1FFFFF</span>;
+
+    X = (X ^ (X &lt;&lt; <span class="Constant">32ULL</span>)) &amp; <span class="Constant">0x001F00000000FFFF</span>;
+    X = (X ^ (X &lt;&lt; <span class="Constant">16ULL</span>)) &amp; <span class="Constant">0x001F0000FF0000FF</span>;
+    X = (X ^ (X &lt;&lt;  <span class="Constant">8ULL</span>)) &amp; <span class="Constant">0x100F00F00F00F00F</span>;
+    X = (X ^ (X &lt;&lt;  <span class="Constant">4ULL</span>)) &amp; <span class="Constant">0x10C30C30C30C30C3</span>;
+    X = (X ^ (X &lt;&lt;  <span class="Constant">2ULL</span>)) &amp; <span class="Constant">0x1249249249249249</span>;
+
+    <span class="Statement">return</span> X;
+
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> morton_key
+EncodeMorton3(uvec3 V)
+{
+    <span class="Statement">return</span> (Part1By2_64((u64)V.Z) &lt;&lt; <span class="Constant">2ULL</span>) + (Part1By2_64((u64)V.Y) &lt;&lt; <span class="Constant">1ULL</span>) + Part1By2_64((u64)V.X);
+}
+
+
+<span class="Comment">// }}}</span>
+
+
+<span class="Type">inline</span> <span class="Type">bool</span>
+IsInsideSphericalRegion(vec3 P, vec3 Centre, <span class="Type">float</span> Radius)
+{
+    <span class="Statement">return</span> (Length(Centre - P) &lt;= Radius);
+}
+
+<span class="Structure">template</span> &lt;<span class="Structure">typename</span> t&gt; <span class="StorageClass">constexpr</span> <span class="Type">inline</span> t
+Remap01(t X)
+{
+    <span class="Statement">return</span> ((X + <span class="Constant">1.0f</span>) / <span class="Constant">2.0f</span>);
+}
+
+
+
+}
+
+<span class="PreProc">#endif</span>
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->

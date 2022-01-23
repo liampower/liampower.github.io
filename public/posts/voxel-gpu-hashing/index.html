@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta name="generator" content="Hugo 0.89.4" />
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,minimal-ui">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <meta name="referrer" content="no-referrer">
+    
+        <title>GPU Hash Tables For Fast Voxel Retrieval | Liam Power</title>
+    
+    
+        <meta name="description" content="Augmenting Sparse Voxel Octrees with GPU-friendly hashtables to give constant lookup times for voxel attributes.">
+    
+    <meta name="author" content="">
+
+    <link rel="stylesheet" href="/style.css" type="text/css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:ital@0;1&display=swap" rel="stylesheet">
+</head>
+
+
+<body>
+    <header>
+        <nav class="menu">
+    <ol>
+        <li><a href="/">Home</a></li>
+        <li><a href="/posts">Blog</a></li>
+        <li><a href="/cv">CV</a></li>
+        <li><a href="/code">Code</a></li>
+    </ol>
+</nav>
+
+    </header>
+    <main role="main">
+        <article>
+            <header>
+                <h1>GPU Hash Tables For Fast Voxel Retrieval</h1>
+                <p title="2020-07-24 08:49:14 &#43;0100 IST" >Jul 24 2020</p>
+            </header>
+            <section class="toc">
+                <nav id="TableOfContents">
+  <ol>
+    <li><a href="#the-problem">The Problem</a></li>
+    <li><a href="#hash-tables">Hash Tables</a></li>
+    <li><a href="#cuckoo-hashing">Cuckoo Hashing</a></li>
+    <li><a href="#the-hash-function">The Hash Function</a></li>
+    <li><a href="#hash-table-data-format">Hash Table Data Format</a>
+      <ol>
+        <li><a href="#normalised-integers">Normalised Integers</a></li>
+      </ol>
+    </li>
+    <li><a href="#constructing-the-table">Constructing The Table</a></li>
+    <li><a href="#voxel-lookups">Voxel Lookups</a></li>
+    <li><a href="#conclusion">Conclusion</a></li>
+  </ol>
+</nav>
+            </section>
+            <figure>
+  <img src="/gallery_scene.jpg" alt="Image of voxelised art gallery">
+  <figcaption>
+    The Hallwyl Museum in Stockholm, Sweden. Voxelised to a resolution of 2<sup>-13</sup>
+  </figcaption>
+</figure>
+<h2 id="the-problem">The Problem</h2>
+<p>A Sparse Voxel Octree (abbreviated SVO) is a neat data structure that allows you to
+store massive voxel worlds efficiently by compressing away large regions of empty
+space. Since GPUs don&rsquo;t have hardware support for SVO encoded scenes, rendering SVOs
+takes a little bit more work than regular polygon-based geometry. You can render SVOs by
+shooting a ray through the octree for each pixel in the viewport and colouring in any pixel whose ray intersects a voxel.</p>
+<figure>
+  <img src="/sibenik_scene.jpg" alt="Image of voxelised Sibenik cathedral">
+  <figcaption>
+    Sibenik Cathedral. Voxelised to a resolution of 2<sup>-13</sup>. This scene contains several
+    million leaf voxels that all need to have their colours and normals retrieved each frame in
+    real time.
+  </figcaption>
+</figure>
+<p>There is a problem with this approach though: raycasting, by itself, can only tell you
+whether or not a particular point in space contains a voxel, you know nothing about what
+kind of data is inside that voxel. This makes it impossible to have voxels with varying
+<em>attribute data</em> &mdash; things like colours and normals. To solve this problem, we need a
+way to compactly store voxel attribute data so that we can quickly look up the colour/
+normal/etc. for a given voxel in the scene. Any solution needs to be fast, since these
+lookups are taking place in the middle of a very tight render loop.</p>
+<h2 id="hash-tables">Hash Tables</h2>
+<p>A hash table (also called a dictionary or a map) is a kind of data structure
+that allows certain <em>keys</em> to be associated with certain <em>values</em>. Given a key, you can
+then quickly find its corresponding value in the table. Hash tables work by using a <em>hash
+function</em> to transform a key into a slot in some backing store (e.g. an array), so
+superficially hash table lookups have <em>O(1)</em> time complexity. So, hash tables sound like
+a good solution to our problem: we can use a voxel&rsquo;s position as a key, and store the
+colour/normal/etc. data as the value associated with that key. Then, when we need that
+data to colour a pixel, we can just look up the attribute data for the pixel&rsquo;s world-space
+position.</p>
+<p>In practice, things are not quite this simple. If your hash table&rsquo;s backing store only has
+100 slots, and you&rsquo;ve got 1000 keys, then some keys are necessarily going to get assigned
+the same slot. When multiple keys get assigned to the same table slot, this is called a
+<em>collision</em>. Most of the hard research that goes into hash tables revolves around finding ways
+to efficiently and correctly handle collisions.</p>
+<p>A simple way of handling collisions is to use an array of linked lists for the backing
+store instead of just a simple array. Then, when you get a collision, just append a new
+item to the linked list associated with the contested slot. This is called <em>chaining</em>.
+Unfortunately, chaining is not suitable for our use case; for starters, you can never be sure
+how many entries might go into a particular slot, so you need dynamic memory allocations.
+Traversing a linked list for every voxel lookup could also slow down our renderer.</p>
+<h2 id="cuckoo-hashing">Cuckoo Hashing</h2>
+<p>Cuckoo hashing is a technique which attempts to resolve collisions by
+computing multiple hashes for each key using <em>n</em> different
+hash functions (denoted <em>H<sub>0</sub></em> to <em>H<sub>n-1</sub></em>). Keys are first hashed
+into their <em>H<sub>0</sub></em> bucket. If  this
+bucket happens to be already occupied, we write the current key in anyway, and
+kick the previously resident key out, sending it to its <em>H<sub>1</sub></em>
+bucket, and so on. This is where the name &ldquo;cuckoo&rdquo; hashing comes from.</p>
+<p>The cuckoo hash tables used in this project are based on Dan Alcantara et. al&rsquo;s
+technique in <em><a href="https://www.researchgate.net/publication/211178395_Building_an_Efficient_Hash_Table_on_the_GPU" rel="nofollow" target="_blank">Building an Efficient Hash Table on the GPU (2011)</a>
+</em></p>
+<p>Cuckoo hashing is well-suited to GPU programming for a couple of reasons.
+First, the table can be constructed using only <code>atomicExchange</code> functions,
+meaning that no complex synchronisation logic needs to be layered on top
+of our hashtable. Second, cuckoo hashing guarantees that a key can be found
+in at most <em>n</em> lookups. This is ideal for our use case, where many
+thousands of hash lookups take place each frame.</p>
+<h2 id="the-hash-function">The Hash Function</h2>
+<p>A <em>hash function</em> is a mapping from keys to slots in your backing store. The quality of a
+hash function can have a very big impact on a hash table implementation&rsquo;s performance: if your
+hash function doesn&rsquo;t do a good enough job of generating very dissimilar slots for different
+keys, you will end up with a lot of collisions.</p>
+<p>It has been said that nearly every single software project contains a TODO
+item to find a better hash function<sup><a href="#fn-0">[1]</a>
+</sup>. The one I picked is almost certainly
+not optimal, but it does get the job done, and it&rsquo;s fast. Our core problem
+is hashing some 3D float vector <em>V</em> into a single 32-bit unsigned
+integer. I used a two-step process for my hash function &mdash; first, the
+3D vectors are converted into integers with the following formula:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-glsl" data-lang="glsl"><span class="n">uint</span> <span class="n">HashVec3</span><span class="p">(</span><span class="k">vec3</span> <span class="n">V</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="k">const</span> <span class="n">uvec3</span> <span class="n">C</span> <span class="o">=</span> <span class="n">uvec3</span><span class="p">(</span><span class="mi">73856093</span><span class="p">,</span> <span class="mi">19349663</span><span class="p">,</span><span class="mi">83492791</span><span class="p">);</span>
+    <span class="n">uvec3</span> <span class="n">H</span> <span class="o">=</span> <span class="n">uvec3</span><span class="p">(</span><span class="n">V</span><span class="p">)</span> <span class="o">*</span> <span class="n">C</span><span class="p">;</span>
+    <span class="k">return</span> <span class="n">H</span><span class="p">.</span><span class="n">x</span> <span class="o">^</span> <span class="n">H</span><span class="p">.</span><span class="n">y</span> <span class="o">^</span> <span class="n">H</span><span class="p">.</span><span class="n">z</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div><p>(From <a href="https://stackoverflow.com/a/5929567" rel="nofollow" target="_blank">this</a>
+ StackOverflow answer)</p>
+<p>Next, we must compute the actual hash table keys from these integers. The
+<a href="https://github.com/skeeto/hash-prospector" rel="nofollow" target="_blank">hash prospector</a>
+ project is a good candidate for our
+use case, since it provides a list of constants that can all be used with the
+same basic formula to produce distinct hash functions. Since we need multiple
+hash functions to do cuckoo hashing, we can simply write the formula once and
+use GPU vector programming to compute all of the hashes in parallel, like so:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-glsl" data-lang="glsl"><span class="n">uvec4</span> <span class="n">ComputeHashes</span><span class="p">(</span><span class="n">uint</span> <span class="n">Key</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="k">const</span> <span class="n">uvec4</span> <span class="n">S0</span> <span class="o">=</span> <span class="n">uvec4</span><span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="mi">18</span><span class="p">,</span> <span class="mi">17</span><span class="p">,</span> <span class="mi">16</span><span class="p">);</span>
+    <span class="k">const</span> <span class="n">uvec4</span> <span class="n">S1</span> <span class="o">=</span> <span class="n">uvec4</span><span class="p">(</span><span class="mi">15</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">15</span><span class="p">,</span> <span class="mi">16</span><span class="p">);</span>
+    <span class="k">const</span> <span class="n">uvec4</span> <span class="n">S2</span> <span class="o">=</span> <span class="n">uvec4</span><span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="mi">17</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mi">15</span><span class="p">);</span>
+
+    <span class="k">const</span> <span class="n">uvec4</span> <span class="n">C0</span> <span class="o">=</span> <span class="n">uvec4</span><span class="p">(</span><span class="mh">0x7feb352d</span><span class="p">,</span> <span class="mh">0xa136aaad</span><span class="p">,</span> <span class="mh">0x24f4d2cd</span><span class="p">,</span> <span class="mh">0xe2d0d4cb</span><span class="p">);</span>
+    <span class="k">const</span> <span class="n">uvec4</span> <span class="n">C1</span> <span class="o">=</span> <span class="n">uvec4</span><span class="p">(</span><span class="mh">0x845ca68b</span><span class="p">,</span> <span class="mh">0x9f6d62d7</span><span class="p">,</span> <span class="mh">0x1ba3b969</span><span class="p">,</span> <span class="mh">0x3c6ad939</span><span class="p">);</span>
+
+    <span class="n">uvec4</span> <span class="n">K</span> <span class="o">=</span> <span class="n">uvec4</span><span class="p">(</span><span class="n">Key</span><span class="p">);</span>
+
+    <span class="n">K</span> <span class="o">^=</span> <span class="n">K</span> <span class="o">&gt;&gt;</span> <span class="n">S0</span><span class="p">;</span> <span class="c1">// Perform all 4 shifts in parallel</span>
+    <span class="n">K</span> <span class="o">*=</span> <span class="n">C0</span><span class="p">;</span>      <span class="c1">// Same thing for the multiplies</span>
+    <span class="n">K</span> <span class="o">^=</span> <span class="n">K</span> <span class="o">&gt;&gt;</span> <span class="n">S1</span><span class="p">;</span>
+    <span class="n">K</span> <span class="o">*=</span> <span class="n">C1</span><span class="p">;</span>
+    <span class="n">K</span> <span class="o">^=</span> <span class="n">K</span> <span class="o">&gt;&gt;</span> <span class="n">S2</span><span class="p">;</span>
+
+    <span class="k">return</span> <span class="n">K</span> <span class="o">%</span> <span class="p">(</span><span class="n">TableSize</span> <span class="o">-</span> <span class="mi">1</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div><h2 id="hash-table-data-format">Hash Table Data Format</h2>
+<p>Our hash table will be stored in a SSBO (shader storage buffer object) and is simply a very large
+array of the following structs:</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-glsl" data-lang="glsl"><span class="k">struct</span> <span class="n">htable_entry</span>
+<span class="p">{</span>
+    <span class="n">uint</span> <span class="n">Key</span><span class="p">;</span> <span class="c1">// Voxel position encoded by HashVec3 above</span>
+    <span class="n">uint</span> <span class="n">PackedNormal</span><span class="p">;</span> <span class="c1">// Snorm packed normal (See &#34;normalised integers&#34; below)</span>
+    <span class="n">uint</span> <span class="n">PackedColour</span><span class="p">;</span> <span class="c1">// Unorm packed colour</span>
+<span class="p">};</span>
+</code></pre></div><h3 id="normalised-integers">Normalised Integers</h3>
+<p>In our <code>htable_entry</code> struct above, the colour and normal data are stored as single
+32-bit unsigned integers, even though the full resolution data are actually floating
+point <code>vec3</code>s. They are packed this way for two reasons: first, it saves space in the
+hash table storage; second, it allows the table construction kernel to use only one
+<code>atomicExchange</code> instruction per attribute, since the GLSL atomic exchange function
+can only work on one 32-bit integer at a time.</p>
+<p>This packing is accomplished by first clamping each component of the input vector
+into the range <code>[-1.0, 1.0]</code> and then multiplying by the value <code>127.0</code>. We can then
+round to produce a signed 8-bit integer in the range <code>[-127, 127]</code>. Finally, each of
+these encoded components are combined into a single 32-bit unsigned integer. This
+type of packing is known as <em>snorm</em> packing (<em>unorm</em> packing is the same thing but
+does not use negative values).</p>
+<p>GLSL has native support for vectors packed into this format via the <code>unpack4x8{S,U}norm</code>
+functions, so it should be quite fast to decode the voxel attributes in our render loop.</p>
+<h2 id="constructing-the-table">Constructing The Table</h2>
+<p>To begin constructing the hash table, we reserve one key value to indicate that a
+table slot is free, such as <code>0xFFFFFFFF</code> &mdash; this is the &ldquo;null&rdquo; key. Next, we
+allocate a large, fixed-size SSBO to serve as our hash table backing store and
+memset that to the null key. Since cuckoo hash tables can be constructed using
+only <code>atomicExchange</code> memory instructions, we can use a compute shader to
+perform the heavy lifting involved in building the hash table, allowing us to compute
+many hashes in parallel.</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-glsl" data-lang="glsl"><span class="k">void</span> <span class="n">main</span><span class="p">()</span>
+<span class="p">{</span>
+    <span class="c1">// We only have 1-dimensional data</span>
+    <span class="n">uint</span> <span class="n">ThreadID</span> <span class="o">=</span> <span class="n">gl_GlobalInvocationID</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+    <span class="n">htable_entry</span> <span class="n">InputEntry</span> <span class="o">=</span> <span class="n">InputBuffer</span><span class="p">[</span><span class="n">ThreadID</span><span class="p">];</span>
+
+    <span class="c1">// Start by computing the first hash for this key</span>
+    <span class="n">uint</span> <span class="n">Slot</span> <span class="o">=</span> <span class="n">ComputeHashes</span><span class="p">(</span><span class="n">InputEntry</span><span class="p">.</span><span class="n">Key</span><span class="p">).</span><span class="n">x</span><span class="p">;</span>
+
+    <span class="c1">// MAX_STEPS is the number of times we try to relocate an evicted key</span>
+    <span class="c1">// before giving up. Make sure to keep reasonably small</span>
+    <span class="k">for</span> <span class="p">(</span><span class="k">int</span> <span class="n">Try</span> <span class="o">=</span> <span class="mo">0</span><span class="p">;</span> <span class="n">Try</span> <span class="o">&lt;</span> <span class="n">MAX_STEPS</span><span class="p">;</span> <span class="o">++</span><span class="n">Try</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="c1">// Swap InputEntry.Key with the data already in OutputBuffer[Slot]</span>
+        <span class="n">InputEntry</span><span class="p">.</span><span class="n">Key</span> <span class="o">=</span> <span class="n">atomicExchange</span><span class="p">(</span><span class="n">OutputBuffer</span><span class="p">[</span><span class="n">Slot</span><span class="p">].</span><span class="n">Key</span><span class="p">,</span> <span class="n">InputEntry</span><span class="p">.</span><span class="n">Key</span><span class="p">);</span>
+        <span class="c1">// (same thing for the colours and normals)</span>
+
+        <span class="c1">// If the slot we wrote into was unoccupied, we&#39;re done</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">NULL_KEY</span> <span class="o">==</span> <span class="n">InputEntry</span><span class="p">.</span><span class="n">Key</span><span class="p">)</span> <span class="k">return</span><span class="p">;</span>
+
+        <span class="c1">// Otherwise, we need to find a home for the evicted entry</span>
+        <span class="n">uvec4</span> <span class="n">H</span> <span class="o">=</span> <span class="n">ComputeHashes</span><span class="p">(</span><span class="n">InputEntry</span><span class="p">.</span><span class="n">Key</span><span class="p">);</span>
+
+        <span class="c1">// if H.x == Slot then Slot = H.y</span>
+        <span class="c1">// if H.y == Slot then Slot = H.z</span>
+        <span class="c1">// if H.z == Slot then Slot = H.w</span>
+        <span class="c1">// if H.w == Slot then Slot = H.x</span>
+        <span class="k">bvec4</span> <span class="n">Msk</span> <span class="o">=</span> <span class="n">equal</span><span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">Slot</span><span class="p">);</span>
+        <span class="n">Slot</span> <span class="o">=</span> <span class="n">dot</span><span class="p">(</span><span class="n">mix</span><span class="p">(</span><span class="k">vec4</span><span class="p">(</span><span class="mo">0</span><span class="p">),</span> <span class="n">H</span><span class="p">.</span><span class="n">yzwx</span><span class="p">,</span> <span class="n">Msk</span><span class="p">),</span> <span class="k">vec4</span><span class="p">(</span><span class="mi">1</span><span class="p">));</span>
+    <span class="p">}</span>
+
+<span class="p">}</span>
+</code></pre></div><p>Our compute shader kernel is responsible for computing the hashes for each input entry and
+writing that entry into its corresponding table slot (in this code, <code>OutputBuffer</code> is the output
+hash table SSBO). A new home is selected for evicted keys through a simple round-robin approach
+(this is the technique used in the Alcantara paper). A select/dot product trick is
+used here to avoid branches, though this table builder kernel isn&rsquo;t as performance critical as
+the renderer kernel.</p>
+<p>Note that we could possibly lose data here: in the unlikely event that a new slot for an
+evicted entry cannot ever be found (perhaps with an unlucky choice of hash functions or too
+small of a table size) then we lose that entry. This can in theory be avoided through re-starting
+the construction process with a new set of hash functions.</p>
+<h2 id="voxel-lookups">Voxel Lookups</h2>
+<p>So, now we have our GPU hash table in an SSBO that maps 3D positions to voxel data attributes.
+The last thing left to do is implement voxel atrribute lookups in the render shader. The SVO
+raycaster kernel will always know a voxel&rsquo;s 3D coordinates, so when this kernel needs a voxel
+data attribute, it can easily determine the key by first encoding the 3D float vector into an
+integer using <code>HashVec3</code>, then determining four possible locations for this attribute by using
+<code>ComputeHashes</code>. Finding the correct entry, then, is simply a matter of checking which slot in
+the hash table holds the required key.</p>
+<div class="highlight"><pre tabindex="0" class="chroma"><code class="language-glsl" data-lang="glsl"><span class="c1">// Sadly, can&#39;t have multi-return in GLSL, so we need to use out params</span>
+<span class="c1">// P is the voxel position ran through HashVec3</span>
+<span class="k">void</span> <span class="n">LookupVoxelData</span><span class="p">(</span><span class="n">uint</span> <span class="n">P</span><span class="p">,</span> <span class="k">out</span> <span class="k">vec3</span> <span class="n">Normal</span><span class="p">,</span> <span class="k">out</span> <span class="k">vec3</span> <span class="n">Colour</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="n">uvec4</span> <span class="n">H</span> <span class="o">=</span> <span class="n">ComputeHashes</span><span class="p">(</span><span class="n">P</span><span class="p">);</span>
+
+    <span class="k">if</span> <span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">x</span><span class="p">].</span><span class="n">Key</span> <span class="o">==</span> <span class="n">P</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="n">Normal</span> <span class="o">=</span> <span class="n">unpackSnorm4x8</span><span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">x</span><span class="p">].</span><span class="n">PackedNormal</span><span class="p">).</span><span class="n">xyz</span><span class="p">;</span>
+        <span class="n">Colour</span> <span class="o">=</span> <span class="n">unpackSnorm4x8</span><span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">x</span><span class="p">].</span><span class="n">PackedColour</span><span class="p">).</span><span class="n">rgb</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">y</span><span class="p">].</span><span class="n">Key</span> <span class="o">==</span> <span class="n">P</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="n">Normal</span> <span class="o">=</span> <span class="n">unpackSnorm4x8</span><span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">y</span><span class="p">].</span><span class="n">PackedNormal</span><span class="p">).</span><span class="n">xyz</span><span class="p">;</span>
+        <span class="n">Colour</span> <span class="o">=</span> <span class="n">unpackSnorm4x8</span><span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">y</span><span class="p">].</span><span class="n">PackedColour</span><span class="p">).</span><span class="n">rgb</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">z</span><span class="p">].</span><span class="n">Key</span> <span class="o">==</span> <span class="n">P</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="n">Normal</span> <span class="o">=</span> <span class="n">unpackSnorm4x8</span><span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">z</span><span class="p">].</span><span class="n">PackedNormal</span><span class="p">).</span><span class="n">xyz</span><span class="p">;</span>
+        <span class="n">Colour</span> <span class="o">=</span> <span class="n">unpackSnorm4x8</span><span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">z</span><span class="p">].</span><span class="n">PackedColour</span><span class="p">).</span><span class="n">rgb</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">w</span><span class="p">].</span><span class="n">Key</span> <span class="o">==</span> <span class="n">P</span><span class="p">)</span>
+    <span class="p">{</span>
+        <span class="n">Normal</span> <span class="o">=</span> <span class="n">unpackSnorm4x8</span><span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">w</span><span class="p">].</span><span class="n">PackedNormal</span><span class="p">).</span><span class="n">xyz</span><span class="p">;</span>
+        <span class="n">Colour</span> <span class="o">=</span> <span class="n">unpackSnorm4x8</span><span class="p">(</span><span class="n">HashTable</span><span class="p">[</span><span class="n">H</span><span class="p">.</span><span class="n">w</span><span class="p">].</span><span class="n">PackedColour</span><span class="p">).</span><span class="n">rgb</span><span class="p">;</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div><h2 id="conclusion">Conclusion</h2>
+<p>This was pretty fun to implement! Replacing my original sparse texture voxel lookup with a more
+robust solution let me bump up the voxel resolution by a huge amount, meaning the renderer could
+handle bigger and more detailed scenes. This approach is, of course, not perfect. Collisions,
+though comparatively rare, do still occur with this approach (they manifest as voxels with
+obviously &ldquo;wrong&rdquo;, or discontinuous, colours). In essence, this design is similar to so-called
+Monte Carlo algorithms: guaranteed to be fast, probably accurate.</p>
+<p>Designs that require guaranteed voxel accuracy can still leverage cuckoo hashing, though the
+table will need to be re-constructed with new hash functions if you can&rsquo;t find a slot for an
+evicted entry.</p>
+<p><small id="fn-0">[1] <a href="https://youtu.be/WyXBawK1jpE?t=2369" rel="nofollow" target="_blank">https://youtu.be/WyXBawK1jpE?t=2369</a>
+</small></p>
+
+        </article>
+        <footer>
+            <em>This blog doesn't have comments, but you can always
+            <a href="mailto:liamp@protonmail.ch">email</a> me with a comment or question!
+            </em>
+        </footer>
+    </main>
+</body>
+</html>

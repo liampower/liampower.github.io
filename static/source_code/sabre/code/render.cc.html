@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>~/code/sabre/code/render.cc.html</title>
+<meta name="Generator" content="Vim/8.0">
+<meta name="plugin-version" content="vim8.1_v2">
+<meta name="syntax" content="cpp">
+<meta name="settings" content="use_css,pre_wrap,no_foldcolumn,expand_tabs,prevent_copy=,use_input_for_pc=fallback">
+<meta name="colorscheme" content="phosphor_amber">
+<link rel="stylesheet" href="/codestyle.css">
+<style>
+<!--
+pre { white-space: pre-wrap; font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+body { font-family: monospace; color: #e6be8a; background-color: #1a1a1a; }
+* { font-size: 1em; }
+.Structure { color: #ffcc33; }
+.Operator { color: #ba9875; }
+.Constant { color: #cf6b4c; }
+.Special { color: #ba9875; }
+.Conditional { color: #ffcc33; }
+.Statement { color: #ffcc33; }
+.PreProc { color: #ba9875; }
+.Type { color: #ffcc33; }
+.Todo { color: #cf6b4c; }
+.StorageClass { color: #ffcc33; }
+.Comment { color: #707070; }
+-->
+</style>
+</head>
+<body>
+<pre id='vimCodeElement'>
+<span class="PreProc">#include </span><span class="Constant">&lt;cassert&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;cstdlib&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;cstdio&gt;</span>
+<span class="PreProc">#include </span><span class="Constant">&lt;cstring&gt;</span>
+
+<span class="PreProc">#include </span><span class="Constant">&lt;glad/glad.h&gt;</span>
+
+<span class="PreProc">#include </span><span class="Constant">&quot;sabre.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;svo.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;render.hh&quot;</span>
+<span class="PreProc">#include </span><span class="Constant">&quot;vecmath.hh&quot;</span>
+
+<span class="Statement">using</span> gl_uint = GLuint;
+<span class="Statement">using</span> gl_int = GLint;
+<span class="Statement">using</span> gl_sizei = GLsizei;
+<span class="Statement">using</span> gl_enum = GLenum;
+<span class="Statement">using</span> gl_u64 = GLuint64;
+
+<span class="Statement">using</span> <span class="Structure">namespace</span> vm;
+
+<span class="Comment">// Fixed-size for shader error log buffers.</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> usize SHADER_LOG_BUFFER_SIZE = <span class="Constant">1024U</span>;
+
+<span class="Comment">// Dimensions of the render kernel work groups.</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> uint WORK_SIZE_X = <span class="Constant">1024U</span>;
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> uint WORK_SIZE_Y = <span class="Constant">768U</span>;
+
+<span class="Comment">// Dimensions of the coarse-pass beams in pixels.</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> <span class="Type">int</span> BEAM_WIDTH_PX = <span class="Constant">8</span>;
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> <span class="Type">int</span> BEAM_HEIGHT_PX = <span class="Constant">8</span>;
+
+<span class="Comment">// Maximum size (in bytes) of the SVO SSBO GPU memory buffer</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> usize MAX_SVO_SSBO_SIZE = <span class="Constant">1024ULL</span>*<span class="Constant">1024ULL</span>*<span class="Constant">128ULL</span>;
+
+<span class="Comment">// The actual memory used for the hashmap buffer is</span>
+<span class="Comment">// HTABLE_SLOT_COUNT * sizeof(htable_entry). This is usually 8 bytes.</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> usize HTABLE_SLOT_COUNT = <span class="Constant">1024ULL</span>*<span class="Constant">1024ULL</span>*<span class="Constant">8ULL</span>;
+
+<span class="Comment">// Byte pattern used to indicate the hashtable null (aka empty) key.</span>
+<span class="Comment">// Since this is used as an argument to memset, only the unsigned char</span>
+<span class="Comment">// conversion of this value is used, so don't try changing it!</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> <span class="Type">int</span> HTABLE_NULL_KEY_BYTE = <span class="Constant">0xFF</span>;
+
+<span class="Comment">// Maximum size of compute shader workgroup as defined by the OpenGL spec.</span>
+<span class="StorageClass">static</span> <span class="StorageClass">constexpr</span> usize MAX_WORK_GROUP_SIZE = <span class="Constant">65535ULL</span>;
+
+
+<span class="Structure">typedef</span> <span class="Structure">enum</span> render_cs_bindings
+{
+    RENDER_CS_MAIN_TEX_BIND = <span class="Constant">0</span>,
+    RENDER_CS_BEAM_TEX_BIND = <span class="Constant">1</span>,
+} render_cs_bindings;
+
+<span class="Structure">typedef</span> <span class="Structure">enum</span> htable_cs_bindings
+{
+    HTABLE_CS_OUT_BUFFER_BIND = <span class="Constant">0</span>,
+    HTABLE_CS_IN_BUFFER_BIND  = <span class="Constant">1</span>,
+} htable_cs_bindings;
+
+<span class="Structure">typedef</span> <span class="Structure">enum</span> htable_cs_uniforms
+{
+    HTABLE_CS_TABLE_SIZE_UNIFORM = <span class="Constant">2</span>,
+    HTABLE_CS_OFFSET_UNIFORM     = <span class="Constant">3</span>,
+} htable_cs_uniforms;
+
+
+<span class="Structure">struct</span> gl_timer
+{
+    uint    Front;
+    gl_uint Q[<span class="Constant">2</span>];
+};
+
+<span class="Comment">// Holds the contextual data required to render a SVO voxel scene with OpenGL</span>
+<span class="Structure">struct</span> render_data
+{
+    gl_uint CanvasVAO;    <span class="Comment">// VAO holding canvas vertices</span>
+    gl_uint CanvasVBO;    <span class="Comment">// VBO holding canvas vertices</span>
+
+    gl_uint SvoBuffer;    <span class="Comment">// Buffer for the SVO voxel data</span>
+    gl_uint FarPtrBuffer; <span class="Comment">// Buffer for the SVO far-ptr data</span>
+
+    gl_uint RenderImage;  <span class="Comment">// GL texture ID of the render output image</span>
+    gl_uint BeamImage;    <span class="Comment">// Texture holding coarse distance image for beam optimisation</span>
+
+    gl_int ViewMatUniformLocation; <span class="Comment">// Location of view matrix uniform</span>
+    gl_int ViewPosUniformLocation; <span class="Comment">// Location of view position uniform</span>
+    gl_int IsCoarsePassUniformLocation;
+
+    gl_uint HasherShader; <span class="Comment">// Compute shader to construct the leaf hashtable</span>
+    gl_uint RenderShader; <span class="Comment">// Shader ID of the raycaster CS</span>
+    gl_uint CanvasShader; <span class="Comment">// Shader program ID for canvas</span>
+    gl_uint HTableInputBuffer;
+    gl_uint HTableOutputBuffer;
+
+    gl_timer Timer;
+};
+
+
+<span class="Structure">struct</span> buffer_pair
+{
+    <span class="Structure">union</span> { gl_uint SvoBuffer, VAO, InputBuffer; };
+    <span class="Structure">union</span> { gl_uint FarPtrBuffer, VBO, OutputBuffer; };
+};
+
+
+<span class="Comment">// Vertices of a full-screen quad which we </span>
+<span class="Comment">// render to using a compute shader.</span>
+<span class="StorageClass">static</span> <span class="StorageClass">const</span> f32 GlobalCanvasVerts[<span class="Constant">12</span>] = {
+    -<span class="Constant">1.0f</span>, -<span class="Constant">1.0f</span>,
+    -<span class="Constant">1.0f</span>,  <span class="Constant">1.0f</span>,
+     <span class="Constant">1.0f</span>,  <span class="Constant">1.0f</span>,
+
+     <span class="Constant">1.0f</span>,  <span class="Constant">1.0f</span>,
+     <span class="Constant">1.0f</span>, -<span class="Constant">1.0f</span>,
+    -<span class="Constant">1.0f</span>, -<span class="Constant">1.0f</span>,
+};
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> gl_timer
+
+CreateGPUTimer(<span class="Type">void</span>)
+{
+    gl_timer Timer = {};
+
+    glGenQueries(<span class="Constant">2</span>, Timer.Q);
+    glQueryCounter(Timer.Q[Timer.Front], GL_TIME_ELAPSED);
+
+    <span class="Statement">return</span> Timer;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+DeleteGPUTimer(gl_timer* Timer)
+{
+    glDeleteQueries(<span class="Constant">2</span>, Timer-&gt;Q);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> u64
+GetGPUTimeElapsed(gl_timer* Timer)
+{
+    gl_u64 Time = <span class="Constant">0</span>;
+    glGetQueryObjectui64v(Timer-&gt;Q[Timer-&gt;Front], GL_QUERY_RESULT, &amp;Time);
+
+    <span class="Comment">// Swap active query (0 -&gt; 1, 1 -&gt; 0)</span>
+    Timer-&gt;Front ^= <span class="Constant">1</span>;
+
+    <span class="Statement">return</span> <span class="Statement">static_cast</span>&lt;u64&gt;(Time);
+}
+
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+BeginTimerQuery(<span class="StorageClass">const</span> gl_timer* Timer)
+{
+    glBeginQuery(GL_TIME_ELAPSED, Timer-&gt;Q[Timer-&gt;Front]);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+EndTimerQuery(<span class="Type">void</span>)
+{
+    glEndQuery(GL_TIME_ELAPSED);
+}
+
+<span class="StorageClass">static</span> buffer_pair
+CreateLeafDataHashTable(<span class="StorageClass">const</span> render_data* <span class="StorageClass">const</span> RenderData,
+                        <span class="StorageClass">const</span> attrib_data* <span class="StorageClass">const</span> Data,
+                        usize Count)
+{
+    gl_uint DataBuffers[<span class="Constant">2</span>] = { <span class="Constant">0</span> };
+    <span class="StorageClass">const</span> usize HTableDataSize = (HTABLE_SLOT_COUNT * <span class="Operator">sizeof</span>(attrib_data));
+
+    glGenBuffers(<span class="Constant">2</span>, DataBuffers);
+
+    <span class="Conditional">if</span> (Count &gt; <span class="Constant">0</span> &amp;&amp; <span class="Constant">nullptr</span> != Data)
+    {
+
+        <span class="Comment">// Upload the input leaf data key-value pairs into the leaf buffer</span>
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, DataBuffers[<span class="Constant">0</span>]);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, Count*<span class="Operator">sizeof</span>(attrib_data), <span class="Constant">nullptr</span>, GL_DYNAMIC_COPY);
+        attrib_data* GPUDataBuffer = (attrib_data*)glMapBuffer(GL_SHADER_STORAGE_BUFFER,
+                                                               GL_WRITE_ONLY);
+        assert(GPUDataBuffer);
+        std::memcpy(GPUDataBuffer, Data, Count*<span class="Operator">sizeof</span>(attrib_data));
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, DataBuffers[<span class="Constant">1</span>]);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, HTableDataSize, <span class="Constant">nullptr</span>, GL_DYNAMIC_COPY);
+        attrib_data* GPUHTableBuffer = (attrib_data*) glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
+        assert(GPUDataBuffer);
+        std::memset(GPUHTableBuffer, HTABLE_NULL_KEY_BYTE, HTableDataSize);
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+        glUseProgram(RenderData-&gt;HasherShader);
+        glUniform1ui(HTABLE_CS_TABLE_SIZE_UNIFORM, HTABLE_SLOT_COUNT);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, HTABLE_CS_IN_BUFFER_BIND, DataBuffers[<span class="Constant">0</span>]);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, HTABLE_CS_OUT_BUFFER_BIND, DataBuffers[<span class="Constant">1</span>]);
+
+        LogInfo(<span class="Constant">&quot;Begin voxel hash table construction&quot;</span>);
+
+        Count = Minimum(Count, HTABLE_SLOT_COUNT);
+        usize Remaining = Count;
+        <span class="Statement">while</span> (Remaining &gt; <span class="Constant">0</span>)
+        {
+            usize WorkGroupCount = Minimum(MAX_WORK_GROUP_SIZE, Remaining);
+
+            glUniform1ui(HTABLE_CS_OFFSET_UNIFORM, Count - Remaining);
+            glDispatchCompute(WorkGroupCount, <span class="Constant">1</span>, <span class="Constant">1</span>);
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+            Remaining -= WorkGroupCount;
+        }
+    }
+
+    <span class="Statement">return</span> buffer_pair{ {DataBuffers[<span class="Constant">0</span>]}, {DataBuffers[<span class="Constant">1</span>]} };
+}
+
+<span class="StorageClass">static</span> buffer_pair
+UploadCanvasVertices(<span class="Type">void</span>)
+{
+    buffer_pair Result = { };
+    gl_uint VAO, VBO;
+
+    glGenBuffers(<span class="Constant">1</span>, &amp;VBO);
+    glGenVertexArrays(<span class="Constant">1</span>, &amp;VAO);
+
+    assert(VAO);
+    assert(VBO);
+
+    glBindVertexArray(VAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER,
+                 <span class="Constant">12</span>*<span class="Operator">sizeof</span>(f32),
+                 GlobalCanvasVerts,
+                 GL_STATIC_DRAW);
+
+    glVertexAttribPointer(<span class="Constant">0</span>, <span class="Constant">2</span>, GL_FLOAT, GL_FALSE, <span class="Constant">0</span>, <span class="Constant">nullptr</span>);
+    glEnableVertexAttribArray(<span class="Constant">0</span>);
+
+    glBindVertexArray(<span class="Constant">0</span>);
+
+    Result.VAO = VAO;
+    Result.VBO = VBO;
+
+    <span class="Statement">return</span> Result;
+}
+
+<span class="StorageClass">static</span> buffer_pair
+UploadSvoBlockData(<span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Svo)
+{
+    buffer_pair Buffers = { };
+    usize NodeBlkSize = (SBR_NODES_PER_BLK * <span class="Operator">sizeof</span>(svo_node));
+    usize FarPtrBlkSize = (SBR_FAR_PTRS_PER_BLK * <span class="Operator">sizeof</span>(far_ptr));
+    usize BlkSize = NodeBlkSize + FarPtrBlkSize;
+
+    usize MaxViewableBlkCount = (MAX_SVO_SSBO_SIZE / BlkSize);
+    usize ViewableBlkCount = Minimum(MaxViewableBlkCount, (usize)Svo-&gt;UsedBlockCount);
+
+    <span class="Conditional">if</span> (ViewableBlkCount &lt; (usize)Svo-&gt;UsedBlockCount)
+    {
+        LogError(<span class="Constant">&quot;[WARNING] SVO block data exceeds max GPU buffer size&quot;</span>);
+    }
+
+    usize NodeBufferSize = NodeBlkSize * ViewableBlkCount;
+    usize FarPtrBufferSize = FarPtrBlkSize * ViewableBlkCount;
+
+    <span class="Comment">// 0: Svo nodes buffer</span>
+    <span class="Comment">// 1: svo far ptr buffer</span>
+    gl_uint BlkBuffers[<span class="Constant">2</span>] = { <span class="Constant">0</span>, <span class="Constant">0</span> };
+    glGenBuffers(<span class="Constant">2</span>, BlkBuffers);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, BlkBuffers[<span class="Constant">1</span>]);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 FarPtrBufferSize,
+                 <span class="Constant">nullptr</span>,
+                 GL_DYNAMIC_COPY);
+    far_ptr* GPUFarPtrBuffer = (far_ptr*)glMapBuffer(GL_SHADER_STORAGE_BUFFER,
+                                                     GL_WRITE_ONLY);
+
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, BlkBuffers[<span class="Constant">0</span>]);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, NodeBufferSize, <span class="Constant">nullptr</span>, GL_DYNAMIC_COPY);
+    svo_node* GPUNodeBuffer = (svo_node*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
+
+    <span class="Conditional">if</span> (BlkBuffers[<span class="Constant">0</span>] &amp;&amp; BlkBuffers[<span class="Constant">1</span>])
+    {
+        svo_block* Blk = Svo-&gt;RootBlock;
+        usize NextSvoDataOffset = <span class="Constant">0</span>;
+        usize NextFarPtrDataOffset = <span class="Constant">0</span>;
+
+        <span class="Statement">for</span> (usize BlkIndex = <span class="Constant">0</span>; BlkIndex &lt; ViewableBlkCount; ++BlkIndex)
+        {
+            memcpy(GPUNodeBuffer + NextSvoDataOffset, Blk-&gt;Entries, Blk-&gt;NextFreeSlot * <span class="Operator">sizeof</span>(svo_node));
+            NextSvoDataOffset += Blk-&gt;NextFreeSlot;
+
+            memcpy(GPUFarPtrBuffer + NextFarPtrDataOffset, Blk-&gt;FarPtrs, SBR_FAR_PTRS_PER_BLK * <span class="Operator">sizeof</span>(far_ptr));
+            NextFarPtrDataOffset += SBR_FAR_PTRS_PER_BLK;
+
+            <span class="Conditional">if</span> (Blk-&gt;Next)
+            {
+                Blk = Blk-&gt;Next;
+            }
+            <span class="Conditional">else</span>
+            {
+                <span class="Statement">break</span>;
+            }
+        }
+    }
+
+    <span class="Comment">// Unmap both buffers</span>
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, BlkBuffers[<span class="Constant">1</span>]);
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, BlkBuffers[<span class="Constant">0</span>]);
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+    <span class="Comment">// Associate buffers with shader slots</span>
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, <span class="Constant">3</span>, BlkBuffers[<span class="Constant">0</span>]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, <span class="Constant">4</span>, BlkBuffers[<span class="Constant">1</span>]);
+
+    Buffers.SvoBuffer = BlkBuffers[<span class="Constant">0</span>];
+    Buffers.FarPtrBuffer = BlkBuffers[<span class="Constant">1</span>];
+
+    <span class="Statement">return</span> Buffers;
+}
+
+<span class="StorageClass">static</span> gl_uint
+CompileComputeShader(<span class="StorageClass">const</span> <span class="Type">char</span>* <span class="StorageClass">const</span> ComputeShaderCode)
+{
+    gl_uint ShaderID = glCreateShader(GL_COMPUTE_SHADER);
+    gl_uint ProgramID = glCreateProgram();
+    gl_int  Success = <span class="Constant">0</span>;
+
+    glShaderSource(ShaderID, <span class="Constant">1</span>, &amp;ComputeShaderCode, <span class="Constant">nullptr</span>);
+    glCompileShader(ShaderID);
+    glGetShaderiv(ShaderID, GL_COMPILE_STATUS, &amp;Success);
+
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == Success)
+    {
+        <span class="Type">char</span> Log[SHADER_LOG_BUFFER_SIZE] = { <span class="Constant">0</span> };
+        glGetShaderInfoLog(ShaderID, SHADER_LOG_BUFFER_SIZE, <span class="Constant">nullptr</span>, Log);
+        LogError(<span class="Constant">&quot;Failed to compile compute shader</span><span class="Special">\n</span><span class="Special">%s</span><span class="Constant">&quot;</span>, Log);
+
+        <span class="Statement">return</span> <span class="Constant">0</span>;
+    }
+
+    glAttachShader(ProgramID, ShaderID);
+    glLinkProgram(ProgramID);
+
+    Success = <span class="Constant">0</span>;
+    glGetProgramiv(ProgramID, GL_LINK_STATUS, &amp;Success);
+
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == Success)
+    {
+        LogError(<span class="Constant">&quot;Failed to link shader&quot;</span>);
+        <span class="Statement">return</span> <span class="Constant">0</span>;
+    }
+
+    glDeleteShader(ShaderID);
+
+    <span class="Statement">return</span> ProgramID;
+}
+
+<span class="StorageClass">static</span> gl_uint
+CompileShader(<span class="StorageClass">const</span> <span class="Type">char</span>* VertSrc, <span class="StorageClass">const</span> <span class="Type">char</span>* FragSrc)
+{
+    gl_uint VertShader = <span class="Constant">0</span>;
+    gl_uint FragShader = <span class="Constant">0</span>;
+    gl_uint Program    = <span class="Constant">0</span>;
+    gl_int  Success    = <span class="Constant">0</span>;
+
+    VertShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(VertShader, <span class="Constant">1</span>, &amp;VertSrc, <span class="Constant">nullptr</span>);
+    glCompileShader(VertShader);
+    glGetShaderiv(VertShader, GL_COMPILE_STATUS, &amp;Success);
+
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == Success)
+    {
+        <span class="Type">char</span> Log[SHADER_LOG_BUFFER_SIZE] = { <span class="Constant">0</span> };
+        glGetShaderInfoLog(VertShader, SHADER_LOG_BUFFER_SIZE, <span class="Constant">nullptr</span>, Log);
+        LogError(<span class="Constant">&quot;Failed to compile vertex shader</span><span class="Special">\n</span><span class="Special">%s</span><span class="Constant">&quot;</span>, Log);
+        <span class="Statement">return</span> <span class="Constant">0</span>;
+    }
+
+    Success = <span class="Constant">false</span>;
+    FragShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(FragShader, <span class="Constant">1</span>, &amp;FragSrc, <span class="Constant">nullptr</span>);
+    glCompileShader(FragShader);
+    glGetShaderiv(FragShader, GL_COMPILE_STATUS, &amp;Success);
+
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == Success)
+    {
+        <span class="Type">char</span> Log[SHADER_LOG_BUFFER_SIZE] = { <span class="Constant">0</span> };
+        glGetShaderInfoLog(FragShader, SHADER_LOG_BUFFER_SIZE, <span class="Constant">nullptr</span>, Log);
+        LogError(<span class="Constant">&quot;Failed to compile fragment shader</span><span class="Special">\n</span><span class="Special">%s</span><span class="Constant">&quot;</span>, Log);
+        <span class="Statement">return</span> <span class="Constant">0</span>;
+    }
+
+    Success = <span class="Constant">false</span>;
+    Program = glCreateProgram();
+    glAttachShader(Program, VertShader);
+    glAttachShader(Program, FragShader);
+    glLinkProgram(Program);
+    glGetProgramiv(Program, GL_LINK_STATUS, &amp;Success);
+
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == Success)
+    {
+        LogError(<span class="Constant">&quot;Failed to link shader&quot;</span>);
+        <span class="Statement">return</span> <span class="Constant">0</span>;
+    }
+
+    glDeleteShader(VertShader);
+    glDeleteShader(FragShader);
+
+    <span class="Statement">return</span> Program;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> <span class="Type">void</span>
+SetUniformData(<span class="StorageClass">const</span> svo* <span class="StorageClass">const</span> Tree, render_data* <span class="StorageClass">const</span> R)
+{
+    glUseProgram(R-&gt;RenderShader);
+
+    glUniform1i(glGetUniformLocation(R-&gt;RenderShader, <span class="Constant">&quot;OuputImgUniform&quot;</span>), R-&gt;RenderImage);
+    glUniform1ui(glGetUniformLocation(R-&gt;RenderShader, <span class="Constant">&quot;MaxDepthUniform&quot;</span>), Tree-&gt;MaxDepth);
+    glUniform1ui(glGetUniformLocation(R-&gt;RenderShader, <span class="Constant">&quot;ScaleExpUniform&quot;</span>), Tree-&gt;ScaleExponent);
+    glUniform1ui(glGetUniformLocation(R-&gt;RenderShader, <span class="Constant">&quot;BlockCountUniform&quot;</span>), Tree-&gt;UsedBlockCount);
+    glUniform1ui(glGetUniformLocation(R-&gt;RenderShader, <span class="Constant">&quot;EntriesPerBlockUniform&quot;</span>), SBR_NODES_PER_BLK);
+    glUniform1ui(glGetUniformLocation(R-&gt;RenderShader, <span class="Constant">&quot;FarPtrsPerBlockUniform&quot;</span>), SBR_FAR_PTRS_PER_BLK);
+    glUniform1ui(glGetUniformLocation(R-&gt;RenderShader, <span class="Constant">&quot;BiasUniform&quot;</span>), Tree-&gt;Bias.Scale);
+    glUniform1f(glGetUniformLocation(R-&gt;RenderShader, <span class="Constant">&quot;InvBiasUniform&quot;</span>), Tree-&gt;Bias.InvScale);
+    glUniform1ui(glGetUniformLocation(R-&gt;RenderShader, <span class="Constant">&quot;TableSizeUniform&quot;</span>), HTABLE_SLOT_COUNT);
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> gl_uint
+CreateRenderImage(<span class="Type">int</span> ImgW, <span class="Type">int</span> ImgH)
+{
+    gl_uint OutTex;
+    glGenTextures(<span class="Constant">1</span>, &amp;OutTex);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, OutTex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D,
+                 <span class="Constant">0</span>,
+                 GL_RGBA8,
+                 ImgW,
+                 ImgH,
+                 <span class="Constant">0</span>,
+                 GL_BGRA,
+                 GL_UNSIGNED_BYTE,
+                 <span class="Constant">nullptr</span>);
+
+    glBindImageTexture(RENDER_CS_MAIN_TEX_BIND,
+                       OutTex,
+                       <span class="Constant">0</span>,
+                       GL_FALSE,
+                       <span class="Constant">0</span>,
+                       GL_WRITE_ONLY,
+                       GL_RGBA8);
+
+    <span class="Statement">return</span> OutTex;
+}
+
+<span class="StorageClass">static</span> <span class="Type">inline</span> gl_uint
+CreateBeamDistanceImage(<span class="Type">int</span> RenderWidth, <span class="Type">int</span> RenderHeight)
+{
+    gl_uint Texture;
+    glGenTextures(<span class="Constant">1</span>, &amp;Texture);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, Texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D,
+                 <span class="Constant">0</span>,
+                 GL_R32F,
+                 RenderWidth/BEAM_WIDTH_PX,
+                 RenderHeight/BEAM_HEIGHT_PX,
+                 <span class="Constant">0</span>,
+                 GL_RED,
+                 GL_FLOAT,
+                 <span class="Constant">nullptr</span>);
+
+    glBindImageTexture(RENDER_CS_BEAM_TEX_BIND,
+                       Texture,
+                       <span class="Constant">0</span>,
+                       GL_FALSE,
+                       <span class="Constant">0</span>,
+                       GL_WRITE_ONLY,
+                       GL_R32F);
+
+    <span class="Statement">return</span> Texture;
+}
+
+<span class="StorageClass">extern</span> u64
+DrawScene(<span class="StorageClass">const</span> render_data* <span class="StorageClass">const</span> R, <span class="StorageClass">const</span> view_data* <span class="StorageClass">const</span> ViewData)
+{
+    BeginTimerQuery(&amp;R-&gt;Timer);
+    glUseProgram(R-&gt;RenderShader);
+    glUniformMatrix3fv(R-&gt;ViewMatUniformLocation, <span class="Constant">1</span>, GL_TRUE, ViewData-&gt;CamTransform);
+    glUniform3fv(R-&gt;ViewPosUniformLocation, <span class="Constant">1</span>, ViewData-&gt;CamPos);
+
+    glUniform1ui(R-&gt;IsCoarsePassUniformLocation, <span class="Constant">1</span>);
+    glDispatchCompute(WORK_SIZE_X/<span class="Constant">64</span>, WORK_SIZE_Y/<span class="Constant">64</span>, <span class="Constant">1</span>);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+    glUniform1ui(R-&gt;IsCoarsePassUniformLocation, <span class="Constant">0</span>);
+    glDispatchCompute(WORK_SIZE_X/<span class="Constant">8</span>, WORK_SIZE_Y / <span class="Constant">8</span>, <span class="Constant">1</span>);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    EndTimerQuery();
+
+    <span class="Comment">// Draw the canvas</span>
+    glUseProgram(R-&gt;CanvasShader);
+    glBindVertexArray(R-&gt;CanvasVAO);
+
+    glBindTexture(GL_TEXTURE_2D, R-&gt;RenderImage);
+
+    glBindBuffer(GL_ARRAY_BUFFER, R-&gt;CanvasVBO);
+    glDrawArrays(GL_TRIANGLES, <span class="Constant">0</span>, <span class="Constant">6</span>);
+
+    <span class="Statement">return</span> GetGPUTimeElapsed(<span class="Statement">const_cast</span>&lt;gl_timer*&gt;(&amp;R-&gt;Timer));
+}
+
+
+<span class="StorageClass">extern</span> render_data*
+CreateRenderData(<span class="StorageClass">const</span> svo* Scene,
+                 <span class="StorageClass">const</span> view_data* ViewData,
+                 <span class="StorageClass">const</span> shader_data* Shaders)
+{
+    render_data* Data = (render_data*)std::calloc(<span class="Constant">1</span>, <span class="Operator">sizeof</span>(render_data));
+    <span class="Conditional">if</span> (<span class="Constant">nullptr</span> == Data)
+    {
+        LogError(<span class="Constant">&quot;Failed to allocate render data&quot;</span>);
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+
+    Data-&gt;RenderShader = CompileComputeShader(Shaders-&gt;Code[SHADER_RENDER_CS]);
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == Data-&gt;RenderShader)
+    {
+        LogError(<span class="Constant">&quot;Failed to compile compute shader&quot;</span>);
+        DeleteRenderData(Data);
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+    TraceOK(<span class="Constant">&quot;Compiled compute shader&quot;</span>);
+
+    Data-&gt;CanvasShader = CompileShader(Shaders-&gt;Code[SHADER_MAIN_VS],
+                                       Shaders-&gt;Code[SHADER_MAIN_FS]);
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == Data-&gt;CanvasShader)
+    {
+        LogError(<span class="Constant">&quot;Failed to compile canvas shader&quot;</span>);
+        DeleteRenderData(Data);
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+    TraceOK(<span class="Constant">&quot;Compiled canvas shader&quot;</span>);
+
+    Data-&gt;HasherShader = CompileComputeShader(Shaders-&gt;Code[SHADER_HASHER_CS]);
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == Data-&gt;HasherShader)
+    {
+        LogError(<span class="Constant">&quot;Failed to compile hashtable builder shader&quot;</span>);
+        DeleteRenderData(Data);
+
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+    TraceOK(<span class="Constant">&quot;Compiled hasher compute shader&quot;</span>);
+
+    buffer_pair HTableBuffers = CreateLeafDataHashTable(Data,
+                                                        Scene-&gt;AttribData.data(),
+                                                        Scene-&gt;AttribData.size());
+
+    Data-&gt;HTableInputBuffer = HTableBuffers.InputBuffer;
+    Data-&gt;HTableOutputBuffer = HTableBuffers.OutputBuffer;
+
+    Data-&gt;BeamImage = CreateBeamDistanceImage(ViewData-&gt;ScreenWidth, ViewData-&gt;ScreenHeight);
+    Data-&gt;RenderImage = CreateRenderImage(ViewData-&gt;ScreenWidth, ViewData-&gt;ScreenHeight);
+    assert(Data-&gt;BeamImage);
+    SetUniformData(Scene, Data);
+
+    buffer_pair CanvasBuffers = UploadCanvasVertices();
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == CanvasBuffers.VAO || <span class="Constant">0</span> == CanvasBuffers.VBO)
+    {
+        LogError(<span class="Constant">&quot;Failed to upload canvas vertices&quot;</span>);
+
+        DeleteRenderData(Data);
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+
+    Data-&gt;CanvasVAO = CanvasBuffers.VAO;
+    Data-&gt;CanvasVBO = CanvasBuffers.VBO;
+
+    buffer_pair SceneBuffers = UploadSvoBlockData(Scene);
+    <span class="Conditional">if</span> (<span class="Constant">0</span> == SceneBuffers.SvoBuffer || <span class="Constant">0</span> == SceneBuffers.FarPtrBuffer)
+    {
+        DeleteRenderData(Data);
+        <span class="Statement">return</span> <span class="Constant">nullptr</span>;
+    }
+
+    Data-&gt;SvoBuffer = SceneBuffers.SvoBuffer;
+    Data-&gt;FarPtrBuffer = SceneBuffers.FarPtrBuffer;
+
+    Data-&gt;ViewMatUniformLocation = glGetUniformLocation(Data-&gt;RenderShader, <span class="Constant">&quot;ViewMatrixUniform&quot;</span>);
+    Data-&gt;ViewPosUniformLocation = glGetUniformLocation(Data-&gt;RenderShader, <span class="Constant">&quot;ViewPosUniform&quot;</span>);
+    Data-&gt;IsCoarsePassUniformLocation = glGetUniformLocation(Data-&gt;RenderShader, <span class="Constant">&quot;IsCoarsePassUniform&quot;</span>);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, Data-&gt;SvoBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, <span class="Constant">5</span>, Data-&gt;HTableOutputBuffer);
+    glActiveTexture(GL_TEXTURE0);
+
+    Data-&gt;Timer = CreateGPUTimer();
+
+    <span class="Statement">return</span> Data;
+}
+
+
+<span class="StorageClass">extern</span> <span class="Type">void</span>
+DeleteRenderData(render_data* RenderData)
+{
+    <span class="Conditional">if</span> (RenderData)
+    {
+        glUseProgram(<span class="Constant">0</span>);
+        glBindVertexArray(<span class="Constant">0</span>);
+
+        glDeleteProgram(RenderData-&gt;RenderShader);
+        glDeleteProgram(RenderData-&gt;CanvasShader);
+
+        glDeleteBuffers(<span class="Constant">1</span>, &amp;RenderData-&gt;SvoBuffer);
+        glDeleteBuffers(<span class="Constant">1</span>, &amp;RenderData-&gt;FarPtrBuffer);
+
+        glDeleteTextures(<span class="Constant">1</span>, &amp;RenderData-&gt;RenderImage);
+        glDeleteVertexArrays(<span class="Constant">1</span>, &amp;RenderData-&gt;CanvasVAO);
+
+        glBindTexture(GL_TEXTURE_3D, <span class="Constant">0</span>);
+
+        DeleteGPUTimer(&amp;RenderData-&gt;Timer);
+    }
+
+    std::free(RenderData);
+}
+
+
+<span class="StorageClass">extern</span> <span class="Type">void</span>
+UpdateRenderScene(<span class="StorageClass">const</span> svo* Scene, render_data* <span class="StorageClass">const</span> RenderDataOut)
+{
+    usize SvoBlockDataSize = <span class="Operator">sizeof</span>(svo_node) * SBR_NODES_PER_BLK;
+    <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Waste here on the last block</span>
+    usize MaxSvoDataSize = SvoBlockDataSize * Scene-&gt;UsedBlockCount;
+
+    usize FarPtrBlockDataSize = <span class="Operator">sizeof</span>(far_ptr) * SBR_FAR_PTRS_PER_BLK;
+    usize MaxFarPtrDataSize = FarPtrBlockDataSize * Scene-&gt;UsedBlockCount;
+
+    <span class="Comment">// Allocate space for the far ptr buffer</span>
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, RenderDataOut-&gt;FarPtrBuffer);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, MaxFarPtrDataSize, <span class="Constant">nullptr</span>, GL_DYNAMIC_COPY);
+    far_ptr* GPUFarPtrBuffer = (far_ptr*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
+
+    <span class="Comment">// Allocate space for the node data buffer</span>
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, RenderDataOut-&gt;SvoBuffer);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, MaxSvoDataSize, <span class="Constant">nullptr</span>, GL_DYNAMIC_COPY);
+    gl_uint* GPUSvoBuffer = (gl_uint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
+
+    <span class="Comment">// Reset SSBO buffer binding</span>
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, <span class="Constant">0</span>);
+
+    <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Don't send all the blocks to the renderer! Use only a subset.</span>
+    svo_block* CurrentBlk = Scene-&gt;RootBlock;
+    usize NextSvoDataOffset = <span class="Constant">0</span>;
+    usize NextFarPtrDataOffset = <span class="Constant">0</span>;
+
+    <span class="Statement">while</span> (CurrentBlk)
+    {
+        assert(NextSvoDataOffset + (CurrentBlk-&gt;NextFreeSlot*<span class="Operator">sizeof</span>(svo_node)) &lt;= MaxSvoDataSize);
+
+        std::memcpy(GPUSvoBuffer + NextSvoDataOffset, CurrentBlk-&gt;Entries, CurrentBlk-&gt;NextFreeSlot * <span class="Operator">sizeof</span>(svo_node));
+        NextSvoDataOffset += CurrentBlk-&gt;NextFreeSlot;
+
+        std::memcpy(GPUFarPtrBuffer + NextFarPtrDataOffset, CurrentBlk-&gt;FarPtrs, SBR_FAR_PTRS_PER_BLK * <span class="Operator">sizeof</span>(far_ptr));
+        NextFarPtrDataOffset += SBR_FAR_PTRS_PER_BLK;
+
+        CurrentBlk = CurrentBlk-&gt;Next;
+    }
+
+    <span class="Comment">// Unmap both buffers</span>
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, RenderDataOut-&gt;FarPtrBuffer);
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, RenderDataOut-&gt;SvoBuffer);
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+}
+
+<span class="StorageClass">extern</span> <span class="Type">bool</span>
+UpdateRenderShaders(<span class="StorageClass">const</span> svo* Scene, <span class="StorageClass">const</span> shader_data* Shaders, u32 ChangeMsk, render_data* Out)
+{
+    <span class="Comment">// Updating either the vertex or fragment shader requires recompiling both.</span>
+    <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Can we just recompile one and then re-link?</span>
+    <span class="Conditional">if</span> (ChangeMsk &amp; (SHADER_MAIN_VS | SHADER_MAIN_FS))
+    {
+        gl_uint Program = CompileShader(Shaders-&gt;Code[SHADER_MAIN_VS],
+                                        Shaders-&gt;Code[SHADER_MAIN_FS]);
+
+        <span class="Conditional">if</span> (<span class="Constant">0</span> == Program)
+        {
+            LogError(<span class="Constant">&quot;Failed to compile shader&quot;</span>);
+            <span class="Statement">return</span> <span class="Constant">false</span>;
+        }
+
+        glDeleteProgram(Out-&gt;CanvasShader);
+        Out-&gt;CanvasShader = Program;
+    }
+
+    <span class="Conditional">if</span> (ChangeMsk &amp; SHADER_RENDER_CS)
+    {
+        gl_uint Program = CompileComputeShader(Shaders-&gt;Code[SHADER_RENDER_CS]);
+        <span class="Conditional">if</span> (<span class="Constant">0</span> == Program)
+        {
+            LogError(<span class="Constant">&quot;Failed to compile shader&quot;</span>);
+            <span class="Statement">return</span> <span class="Constant">false</span>;
+        }
+
+        glDeleteProgram(Out-&gt;RenderShader);
+        Out-&gt;RenderShader = Program;
+
+        <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Optimise this</span>
+        SetUniformData(Scene, Out);
+    }
+
+    <span class="Conditional">if</span> (ChangeMsk &amp; SHADER_HASHER_CS)
+    {
+        gl_uint Program = CompileComputeShader(Shaders-&gt;Code[SHADER_HASHER_CS]);
+        <span class="Conditional">if</span> (<span class="Constant">0</span> == Program)
+        {
+            LogError(<span class="Constant">&quot;Failed to compile shader&quot;</span>);
+            <span class="Statement">return</span> <span class="Constant">false</span>;
+        }
+
+        glDeleteProgram(Out-&gt;HasherShader);
+        Out-&gt;HasherShader = Program;
+
+        SetUniformData(Scene, Out);
+    }
+
+    <span class="Statement">return</span> <span class="Constant">true</span>;
+}
+
+
+<span class="StorageClass">extern</span> <span class="Type">bool</span>
+DEBUGOutputRenderShaderAssembly(<span class="StorageClass">const</span> render_data* R, <span class="Type">FILE</span>* OutFile)
+{
+    gl_sizei DataLength = <span class="Constant">0</span>;
+    gl_enum BinFormats[<span class="Constant">64</span>];
+    gl_int AsmLength = <span class="Constant">0</span>;
+
+    glGetProgramiv(R-&gt;RenderShader, GL_PROGRAM_BINARY_LENGTH, &amp;AsmLength);
+    byte* ShaderAssembly = (byte*)std::malloc((usize)AsmLength);
+    glGetProgramBinary(R-&gt;RenderShader, AsmLength, &amp;DataLength, BinFormats, ShaderAssembly);
+
+    std::fwrite(ShaderAssembly, <span class="Operator">sizeof</span>(byte), (usize)DataLength, OutFile);
+
+    std::free(ShaderAssembly);
+
+    <span class="Comment">// </span><span class="Todo">TODO</span><span class="Comment">(Liam): Error checking</span>
+    <span class="Statement">return</span> <span class="Constant">true</span>;
+}
+
+</pre>
+</body>
+</html>
+<!-- vim: set foldmethod=manual : -->
